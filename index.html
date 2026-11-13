@@ -212,7 +212,7 @@ const SHIPS = [
   { key:'carrier', name:'空母', shape:[[0,0],[0,1],[0,2],[0,3],[1,3]],
     skill:{ type:'recon', name:'偵察機', cd:3, desc:'縦か横の1列を偵察し、まだ当たっていない艦のマス数がわかる（攻撃なし）' } },
   { key:'cruiser', name:'巡洋艦', shape:[[0,0],[1,0],[2,0],[1,1]],
-    skill:{ type:'sonar', name:'ソナー弾', cd:2, desc:'1マス攻撃し、着弾点から半径2マス（ひし形）に艦が残っているかわかる' } },
+    skill:{ type:'sonar', name:'ソナー弾', cd:2, desc:'1マス攻撃し、着弾点の周囲8マスに艦が残っているかわかる' } },
   { key:'submarine', name:'潜水艦', shape:[[0,0],[1,0],[2,0]],
     skill:{ type:'dive', name:'潜航', cd:3, desc:'次の相手ターン、この艦への命中を「外れ」として返す' } },
   { key:'destroyer', name:'駆逐艦', shape:[[0,0],[1,0]],
@@ -304,10 +304,11 @@ function resolveAction(D, action, attackerView) {
   return pk;
 }
 
+// 着弾点の周囲8マス（着弾点そのものは含まない）
 function sonarCells(i) {
   const [x0, y0] = xy(i), out = [];
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
-    if (Math.abs(x - x0) + Math.abs(y - y0) <= 2) out.push(idx(x, y));
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++)
+    if ((dx || dy) && inB(x0 + dx, y0 + dy)) out.push(idx(x0 + dx, y0 + dy));
   return out;
 }
 function barrageCells(i) {
@@ -758,7 +759,7 @@ function hoverCells() {
   if (ui.hover === null || !myTurn()) return [];
   switch (ui.mode) {
     case 'barrage': return barrageCells(ui.hover);
-    case 'sonar': return sonarCells(ui.hover);
+    case 'sonar': return [ui.hover, ...sonarCells(ui.hover)];
     case 'recon': return lineCells(ui.hover, ui.axis);
     default: return [ui.hover];
   }
@@ -773,7 +774,7 @@ function renderBattle(reveal) {
   const modeText = {
     fire: '通常攻撃：相手の海域を1マス選んで撃つ',
     barrage: '一斉砲撃：2×2の範囲を選ぶ（Escでキャンセル）',
-    sonar: 'ソナー弾：撃つマスを選ぶ。周囲のひし形範囲を探知（Escでキャンセル）',
+    sonar: 'ソナー弾：撃つマスを選ぶ。その周囲8マスを探知（Escでキャンセル）',
     recon: `偵察機：${ui.axis === 'row' ? '横1行' : '縦1列'}を選ぶ（R／右クリックで縦横切替、Escでキャンセル）`,
     rapid: `連射：あと${ui.rapidLeft || 2}発`,
     dive: '潜航：潜水艦のカードをもう一度クリックで確定（Escでキャンセル）',
