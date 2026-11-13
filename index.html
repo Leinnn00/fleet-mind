@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>艦隊心理戦（試作）</title>
+<style>
+:root{
+  --bg:#0b1622; --panel:#12233a; --panel2:#183050; --line:#2a4a70;
+  --text:#e6eef7; --muted:#8aa3bf; --accent:#4fc3f7; --hit:#ff5252; --miss:#5c7a99;
+  --sunk:#8b1d1d; --ship:#3d8b5a; --pos:#ffb74d; --neg:#26a69a; --c:40px;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;background:radial-gradient(circle at 50% 0,#14304d,var(--bg) 70%);color:var(--text);min-height:100vh}
+h1,h2,h3{margin:.2em 0}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:8px 14px}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.4;cursor:default}
+button.primary{background:#1e6fa8;border-color:#4fc3f7}
+.screen{display:none;max-width:1180px;margin:0 auto;padding:16px}
+.screen.active{display:block}
+.center{text-align:center}
+.muted{color:var(--muted);font-size:.9em}
+.row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;justify-content:center}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+
+/* ship cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.card{background:var(--panel2);border:2px solid var(--line);border-radius:10px;padding:10px;cursor:pointer;position:relative}
+.card.sel{border-color:var(--accent);box-shadow:0 0 12px #4fc3f766}
+.card.sunk{opacity:.45}
+.card.sunk::after{content:"撃沈";position:absolute;top:8px;right:10px;color:var(--hit);font-weight:bold}
+.card .name{font-weight:bold}
+.card .skill{font-size:.85em;color:var(--muted);margin-top:4px}
+.card .cd{font-size:.8em;margin-top:4px}
+.ready{color:#7cf29c}
+.mini{display:inline-grid;gap:2px;margin:6px 0}
+.mini div{width:12px;height:12px;border-radius:2px}
+.mini .on{background:var(--ship)}
+.mini .hitc{background:var(--hit)}
+
+/* boards */
+.boardwrap{display:flex;flex-direction:column;align-items:center}
+.board{display:grid;grid-template-columns:20px repeat(var(--n,10),var(--c));grid-template-rows:20px repeat(var(--n,10),var(--c));gap:2px;user-select:none}
+.lbl{font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:center}
+.lbl.rc{color:var(--pos);font-weight:bold}
+.cell{background:#0f2a44;border-radius:4px;position:relative;display:flex;align-items:center;justify-content:center;font-size:14px}
+.board.clickable .cell{cursor:crosshair}
+.cell.ship{background:var(--ship)}
+.cell.hit{background:var(--hit)}
+.cell.hit::after{content:"✕";font-weight:bold}
+.cell.miss{background:#1d3d5c}
+.cell.miss::after{content:"";width:40%;height:40%;border-radius:50%;border:2px solid #9fc3e6;opacity:.8}
+.cell.dmiss{background:#2a2550}
+.splash{animation:splash .6s ease-out}
+@keyframes splash{0%{box-shadow:0 0 0 0 #9fd8ff;background:#4a90c8}100%{box-shadow:0 0 0 10px #9fd8ff00}}
+.boom{animation:boom .5s ease-out}
+@keyframes boom{0%{transform:scale(1.4);background:#ffd54f;box-shadow:0 0 18px #ff9800}100%{transform:scale(1)}}
+.shake{animation:shake .35s}
+@keyframes shake{0%,100%{transform:translate(0)}25%{transform:translate(-4px,2px)}50%{transform:translate(4px,-2px)}75%{transform:translate(-2px,1px)}}
+.popup{position:fixed;pointer-events:none;font-weight:bold;font-size:20px;transform:translate(-50%,-50%);z-index:20;
+  text-shadow:0 2px 6px #000;animation:pop 1.1s ease-out forwards;white-space:nowrap}
+.popup.miss{color:#9fd8ff}.popup.hit{color:#ff6b6b;font-size:24px}.popup.sunk{color:#ffd54f;font-size:30px}.popup.info{color:var(--pos);font-size:18px}
+@keyframes pop{0%{opacity:0;margin-top:6px;transform:translate(-50%,-50%) scale(.6)}15%{opacity:1;transform:translate(-50%,-50%) scale(1.15)}
+  70%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;margin-top:-28px}}
+#mute{position:fixed;right:14px;bottom:14px;z-index:30;font-size:20px;padding:6px 10px}
+.cell.dmiss::after{content:"?";color:#b39ddb;font-weight:bold}
+.cell.sunk{background:var(--sunk)}
+.cell.sunk::after{content:"✕";color:#ffb3b3}
+.cell.ship.hit{background:var(--hit)}
+.cell.pos{box-shadow:inset 0 0 0 2px var(--pos)}
+.cell.neg{box-shadow:inset 0 0 0 2px var(--neg)}
+.cell.prev{outline:2px solid var(--accent);outline-offset:-2px;background:#1f4d73}
+.cell.bad{outline:2px solid var(--hit);outline-offset:-2px}
+.cell.diving{background:#2c5a8a}
+.cell.last{animation:pulse 1s ease-out}
+@keyframes pulse{0%{transform:scale(1.25);filter:brightness(1.8)}100%{transform:scale(1)}}
+
+.turnbar{font-size:1.2em;font-weight:bold;padding:8px 16px;border-radius:10px;text-align:center;margin-bottom:10px}
+.turnbar.me{background:#1e6fa8}
+.turnbar.op{background:#5a2a2a}
+.modebar{min-height:28px;text-align:center;color:var(--accent);margin:6px 0}
+.log{max-height:160px;overflow-y:auto;font-size:.85em;line-height:1.6}
+.log .op{color:#ff9e9e}
+.log .me{color:#9ed8ff}
+.side{width:240px}
+.side.wide{width:330px}
+.board.small{--c:30px}
+.board.small .cell{font-size:11px}
+.side .cards{grid-template-columns:1fr}
+.legend{font-size:.8em;color:var(--muted);margin-top:8px;line-height:1.7}
+.legend span{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.overlay{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:10}
+.overlay.open{display:flex}
+.overlay .panel{max-width:520px;text-align:center}
+@media (max-width:760px){:root{--c:min(30px,8vw)} .side,.side.wide{width:100%}}
+</style>
+</head>
+<body>
+
+<!-- タイトル -->
+<section id="s-title" class="screen active center">
+  <h1 style="margin-top:50px">艦隊心理戦</h1>
+  <p class="muted">相手の編成は全部見えている。見えないのは、どこにいるかだけ。</p>
+  <p>盤面サイズ：<select id="size-sel" style="font:inherit;padding:6px;border-radius:8px;background:var(--panel2);color:var(--text);border:1px solid var(--line)">
+    <option value="8" selected>8×8（予算14マス）</option><option value="9">9×9（予算15マス）</option><option value="10">10×10（予算16マス）</option></select>
+    <br><span class="muted">オンラインではルームを作った人のサイズになります</span></p>
+  <div class="row" style="margin-top:20px">
+    <div class="panel" style="width:260px"><h3>ひとりで</h3><p><button class="primary" onclick="startCpu()">CPU戦</button></p></div>
+    <div class="panel" style="width:320px"><h3>オンライン対戦</h3>
+      <p><button class="primary" onclick="createRoom()">ルームを作る</button></p>
+      <p><input id="code-in" maxlength="4" inputmode="numeric" placeholder="4桁コード"
+        style="font:inherit;width:110px;padding:8px;border-radius:8px;border:1px solid var(--line);background:#0f2a44;color:var(--text);text-align:center;letter-spacing:4px">
+        <button onclick="joinRoom()">参加</button></p>
+    </div>
+  </div>
+</section>
+
+<!-- ロビー -->
+<section id="s-lobby" class="screen center">
+  <h2 style="margin-top:60px">ルーム</h2>
+  <div id="lobby-code" style="font-size:56px;font-weight:bold;letter-spacing:12px;color:var(--accent)"></div>
+  <p id="lobby-msg" class="muted"></p>
+  <p><button onclick="leaveRoom()">やめる</button></p>
+</section>
+
+<!-- 編成 -->
+<section id="s-fleet" class="screen">
+  <h2>編成</h2>
+  <p class="muted">合計 <b id="budget-max"></b> マス以内で艦を選ぶ（同じ艦は1隻まで、2隻以上）。編成はお互い同時に公開される。</p>
+  <div class="cards" id="fleet-cards"></div>
+  <p id="fleet-wait" class="center" style="color:var(--pos)"></p>
+  <p class="center">使用マス：<b id="budget-now">0</b> / <span id="budget-max2"></span>
+    &nbsp;<button class="primary" id="btn-fleet-ok" onclick="confirmFleet()" disabled>この編成で決定</button></p>
+</section>
+
+<!-- 配置 -->
+<section id="s-place" class="screen">
+  <h2>配置</h2>
+  <p class="muted">艦を選んで盤面をクリック。<b>R</b>／右クリックで回転、<b>F</b>で反転。置いた艦をクリックすると拾い直せる。</p>
+  <div class="row">
+    <div class="panel side"><h3>相手の編成</h3><div class="cards" id="place-op"></div></div>
+    <div class="boardwrap">
+      <div class="board clickable" id="place-board"></div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button onclick="rotateSel()">回転 (R)</button>
+        <button onclick="flipSel()">反転 (F)</button>
+        <button onclick="randomPlace()">ランダム配置</button>
+        <button onclick="resetPlace()">リセット</button>
+      </div>
+    </div>
+    <div class="panel side"><h3>自分の艦</h3><div class="cards" id="place-my"></div>
+      <p class="center"><button class="primary" id="btn-place-ok" onclick="confirmPlace()" disabled>出撃</button></p>
+      <p id="place-wait" class="center" style="color:var(--pos)"></p></div>
+  </div>
+</section>
+
+<!-- 戦闘 -->
+<section id="s-battle" class="screen">
+  <div class="turnbar" id="turnbar"></div>
+  <div class="modebar" id="modebar"></div>
+  <div class="row">
+    <div class="panel side">
+      <h3>相手の艦隊</h3>
+      <div class="cards" id="op-fleet"></div>
+    </div>
+    <div class="boardwrap">
+      <div class="muted">相手の海域（ここを攻撃）</div>
+      <div class="board" id="enemy-board"></div>
+      <div class="legend">
+        <span style="background:var(--hit)"></span>命中
+        <span style="background:var(--sunk)"></span>撃沈
+        <span style="border:2px solid var(--pos)"></span>ソナー反応あり
+        <span style="border:2px solid var(--neg)"></span>反応なし
+        <b style="color:#b39ddb">?</b> 潜航中の外れ（本当は当たっていたかも）
+      </div>
+    </div>
+    <div class="panel side wide">
+      <div class="muted center">自分の海域</div>
+      <div class="board small" id="my-board" style="margin:4px auto 10px"></div>
+      <h3>自分の艦隊</h3>
+      <div class="muted">艦をクリックでスキル発動（通常攻撃の代わり）</div>
+      <div class="cards" id="my-fleet"></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:12px"><div class="log" id="log"></div></div>
+</section>
+
+<button id="mute" onclick="toggleMute()" title="効果音のオン/オフ">🔊</button>
+<div class="overlay" id="ov">
+  <div class="panel">
+    <h2 id="ov-title"></h2>
+    <div id="ov-body"></div>
+    <p><button class="primary" id="ov-btn"></button></p>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+// データ定義（ここを書き換えればバランス調整できる）
+// =====================================================================
+let N = 8;               // 盤面サイズ（タイトル画面で変更可）
+let BUDGET = 14;         // 編成の合計マス上限
+const SIZE_BUDGET = { 8: 14, 9: 15, 10: 16 }; // 盤面サイズごとの予算
+const MIN_SHIPS = 2;
+
+// shape: 形を表すマスの座標 [x,y]
+// skill.type: 'barrage' | 'sonar' | 'recon' | 'dive' | 'rapid'
+const SHIPS = [
+  { key:'battleship', name:'戦艦', shape:[[1,0],[0,1],[1,1],[2,1],[1,2]],
+    skill:{ type:'barrage', name:'一斉砲撃', cd:3, desc:'2×2の4マスをまとめて攻撃' } },
+  { key:'carrier', name:'空母', shape:[[0,0],[0,1],[0,2],[0,3],[1,3]],
+    skill:{ type:'recon', name:'偵察機', cd:3, desc:'縦か横の1列を偵察し、まだ当たっていない艦のマス数がわかる（攻撃なし）' } },
+  { key:'cruiser', name:'巡洋艦', shape:[[0,0],[1,0],[2,0],[1,1]],
+    skill:{ type:'sonar', name:'ソナー弾', cd:2, desc:'1マス攻撃し、着弾点から半径2マス（ひし形）に艦が残っているかわかる' } },
+  { key:'submarine', name:'潜水艦', shape:[[0,0],[1,0],[2,0]],
+    skill:{ type:'dive', name:'潜航', cd:3, desc:'次の相手ターン、この艦への命中を「外れ」として返す' } },
+  { key:'destroyer', name:'駆逐艦', shape:[[0,0],[1,0]],
+    skill:{ type:'rapid', name:'連射', cd:3, desc:'このターン2発撃てる' } },
+];
+const SHIP = Object.fromEntries(SHIPS.map(s => [s.key, s]));
+
+// =====================================================================
+// 形ユーティリティ
+// =====================================================================
+const idx = (x, y) => y * N + x;
+const xy  = i => [i % N, Math.floor(i / N)];
+const inB = (x, y) => x >= 0 && y >= 0 && x < N && y < N;
+
+function normalize(cells) {
+  const mx = Math.min(...cells.map(c => c[0])), my = Math.min(...cells.map(c => c[1]));
+  return cells.map(([x, y]) => [x - mx, y - my]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+}
+const rot  = cells => normalize(cells.map(([x, y]) => [-y, x]));
+const flip = cells => normalize(cells.map(([x, y]) => [-x, y]));
+function orientations(shape) {
+  const out = [], seen = new Set();
+  let s = normalize(shape);
+  for (let f = 0; f < 2; f++) {
+    for (let r = 0; r < 4; r++) {
+      const k = JSON.stringify(s);
+      if (!seen.has(k)) { seen.add(k); out.push(s); }
+      s = rot(s);
+    }
+    s = flip(s);
+  }
+  return out;
+}
+const ORIENTS = Object.fromEntries(SHIPS.map(s => [s.key, orientations(s.shape)]));
+
+function placeCells(shape, ox, oy) {
+  const res = [];
+  for (const [x, y] of shape) {
+    if (!inB(ox + x, oy + y)) return null;
+    res.push(idx(ox + x, oy + y));
+  }
+  return res;
+}
+function shapeSize(key) { return SHIP[key].shape.length; }
+
+// =====================================================================
+// ゲームエンジン（DOMに触らない。オンライン対戦でもそのまま使う想定）
+// =====================================================================
+function makePlayer(placements) {
+  // placements: [{key, cells:[idx...]}]
+  return {
+    fleet: placements.map(p => ({ key: p.key, cells: p.cells, hit: new Set(), sunk: false, cd: 0 })),
+    diving: false,
+    view: Array(N * N).fill(null),   // 相手盤面の見え方: null|'miss'|'dmiss'|'hit'|'sunk'
+    intel: Array(N * N).fill(null),  // ソナー結果: null|'pos'|'neg'
+    recon: { row: Array(N).fill(null), col: Array(N).fill(null) },
+  };
+}
+
+function shipAt(player, i) { return player.fleet.find(s => s.cells.includes(i)); }
+function alive(player) { return player.fleet.some(s => !s.sunk); }
+function canShoot(view, i) { return view[i] === null || view[i] === 'dmiss'; }
+
+// ---- 防御側の判定（自分の盤面を持っている側だけが実行する） ----
+// D: 本当の配置を持つプレイヤー。戻り値は相手に返す「結果パケット」（配置そのものは含まない）
+function resolveShot(D, i) {
+  const s = shipAt(D, i);
+  if (s && !s.sunk && !s.hit.has(i)) {
+    if (D.diving && s.key === 'submarine') return { i, result: 'miss' }; // 潜航中は外れと返す
+    s.hit.add(i);
+    if (s.hit.size === s.cells.length) { s.sunk = true; return { i, result: 'hit', sunkKey: s.key, sunkCells: s.cells.slice() }; }
+    return { i, result: 'hit' };
+  }
+  return { i, result: 'miss' };
+}
+// attackerView: 攻撃側の見え方（一斉砲撃で既に撃ったマスを除くのに使う。両者が同じものを持っている）
+function targetCells(action, attackerView) {
+  switch (action.type) {
+    case 'fire': case 'sonar': case 'rapid': return [action.i];
+    case 'barrage': return barrageCells(action.i).filter(c => canShoot(attackerView, c));
+    default: return [];
+  }
+}
+const NEEDS_RESOLVE = ['fire', 'barrage', 'sonar', 'recon', 'rapid'];
+function resolveAction(D, action, attackerView) {
+  const pk = { shots: targetCells(action, attackerView).map(c => resolveShot(D, c)) };
+  if (action.type === 'sonar') pk.count = remainingIn(D, sonarCells(action.i));
+  if (action.type === 'recon') pk.count = remainingIn(D, lineCells(action.i, action.axis));
+  return pk;
+}
+
+function sonarCells(i) {
+  const [x0, y0] = xy(i), out = [];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
+    if (Math.abs(x - x0) + Math.abs(y - y0) <= 2) out.push(idx(x, y));
+  return out;
+}
+function barrageCells(i) {
+  let [x, y] = xy(i);
+  x = Math.min(x, N - 2); y = Math.min(y, N - 2);
+  return [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
+}
+function lineCells(i, axis) {
+  const [x, y] = xy(i), out = [];
+  for (let k = 0; k < N; k++) out.push(axis === 'row' ? idx(k, y) : idx(x, k));
+  return out;
+}
+function remainingIn(D, cells) {
+  let n = 0;
+  for (const c of cells) { const s = shipAt(D, c); if (s && !s.hit.has(c)) n++; }
+  return n;
+}
+
+const posName = i => { const [x, y] = xy(i); return 'ABCDEFGHIJ'[x] + (y + 1); };
+
+// =====================================================================
+// 効果音（Web Audioで合成：音声ファイル不要）
+// =====================================================================
+let AC = null, muted = false;
+function ac() { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; }
+function toggleMute() { muted = !muted; $('mute').textContent = muted ? '🔇' : '🔊'; }
+function tone(f, dur, { type = 'sine', vol = .2, to = null, at = 0 } = {}) {
+  if (muted) return; const c = ac(), t = c.currentTime + at;
+  const o = c.createOscillator(), g = c.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t); if (to) o.frequency.exponentialRampToValueAtTime(to, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + .02);
+}
+function noise(dur, { freq = 1000, q = 1, vol = .3, type = 'lowpass', to = null, at = 0 } = {}) {
+  if (muted) return; const c = ac(), t = c.currentTime + at;
+  const buf = c.createBuffer(1, c.sampleRate * dur, c.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+  src.buffer = buf; f.type = type; f.Q.value = q; f.frequency.setValueAtTime(freq, t);
+  if (to) f.frequency.exponentialRampToValueAtTime(to, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  src.connect(f).connect(g).connect(c.destination); src.start(t);
+}
+const SFX = {
+  click:   () => tone(660, .06, { type: 'triangle', vol: .12 }),
+  place:   () => { noise(.12, { freq: 400, vol: .35 }); tone(140, .12, { type: 'square', vol: .08 }); },
+  invalid: () => tone(160, .15, { type: 'square', vol: .1, to: 110 }),
+  fire:    () => { noise(.25, { freq: 2500, to: 300, vol: .25 }); tone(220, .2, { type: 'sawtooth', vol: .05, to: 80 }); },
+  miss:    () => { noise(.45, { freq: 3000, to: 500, vol: .22, type: 'bandpass', q: .8 }); tone(900, .15, { vol: .06, to: 300 }); },
+  hit:     () => { noise(.6, { freq: 1200, to: 80, vol: .5 }); tone(90, .45, { type: 'sawtooth', vol: .2, to: 40 }); },
+  sunk:    () => { noise(1.2, { freq: 900, to: 50, vol: .6 }); tone(70, 1, { type: 'sawtooth', vol: .25, to: 30 });
+                   noise(.6, { freq: 600, to: 60, vol: .4, at: .25 }); tone(523, .25, { type: 'triangle', vol: .12, at: .5 }); tone(784, .4, { type: 'triangle', vol: .12, at: .7 }); },
+  sonarPos:() => { tone(1400, .5, { vol: .15 }); tone(1400, .5, { vol: .12, at: .35 }); tone(1870, .6, { vol: .12, at: .7 }); },
+  sonarNeg:() => { tone(1400, .5, { vol: .15 }); tone(700, .8, { vol: .08, at: .4 }); },
+  recon:   () => { tone(110, 1.1, { type: 'sawtooth', vol: .06, to: 140 }); noise(1.1, { freq: 300, vol: .1 }); tone(880, .15, { type: 'triangle', vol: .1, at: 1 }); },
+  dive:    () => { for (let k = 0; k < 6; k++) tone(300 + Math.random() * 400, .12, { vol: .1, to: 900, at: k * .08 }); noise(.8, { freq: 500, to: 150, vol: .15 }); },
+  myTurn:  () => { tone(523, .12, { type: 'triangle', vol: .1 }); tone(784, .2, { type: 'triangle', vol: .1, at: .1 }); },
+  win:     () => [523, 659, 784, 1047].forEach((f, k) => tone(f, .35, { type: 'triangle', vol: .15, at: k * .15 })),
+  lose:    () => [392, 330, 262, 196].forEach((f, k) => tone(f, .45, { type: 'triangle', vol: .13, at: k * .22 })),
+};
+function sfx(name) { try { SFX[name](); } catch (e) {} }
+
+// 盤面のマスの上に文字を出す
+function popup(boardId, i, text, cls) {
+  const el = $(boardId).querySelector(`.cell[data-i="${i}"]`); if (!el) return;
+  const r = el.getBoundingClientRect(), p = document.createElement('div');
+  p.className = 'popup ' + cls; p.textContent = text;
+  p.style.left = (r.left + r.width / 2) + 'px'; p.style.top = (r.top + r.height / 2) + 'px';
+  document.body.appendChild(p); setTimeout(() => p.remove(), 1200);
+}
+function flash(boardId, i, cls) {
+  const el = $(boardId).querySelector(`.cell[data-i="${i}"]`); if (!el) return;
+  el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 700);
+}
+// 演出を順番に出すための予約（一斉砲撃などで1発ずつ鳴らす）
+function fx(fn) { const d = ui.fxDelay; ui.fxDelay += 260; setTimeout(fn, d); }
+
+// =====================================================================
+// 画面・進行
+// =====================================================================
+const $ = id => document.getElementById(id);
+function show(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); $(id).classList.add('active'); }
+
+let myPick = [], cpuPick = [];
+let placing = null; // {placed:{key:cells}, sel:key, orient:{key:shapeIdx}, hover:i}
+let G = null;       // 戦闘状態
+let ui = { mode: 'fire', ship: null, axis: 'row', rapidLeft: 0, hover: null, last: [] , busy:false};
+
+// ---------- カード描画 ----------
+function miniShape(shape, hitMask) {
+  const w = Math.max(...shape.map(c => c[0])) + 1, h = Math.max(...shape.map(c => c[1])) + 1;
+  let html = `<div class="mini" style="grid-template-columns:repeat(${w},12px)">`;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const k = shape.findIndex(c => c[0] === x && c[1] === y);
+    html += `<div class="${k < 0 ? '' : (hitMask && hitMask[k] ? 'hitc' : 'on')}"></div>`;
+  }
+  return html + '</div>';
+}
+function cardHTML(key, opt = {}) {
+  const d = SHIP[key];
+  let cdLine = '';
+  if (opt.cd !== undefined) cdLine = opt.sunk ? '' : (opt.cd === 0
+      ? `<div class="cd ready">スキル使用可能</div>` : `<div class="cd">再使用まで あと${opt.cd}ターン</div>`);
+  return `<div class="card ${opt.sel ? 'sel' : ''} ${opt.sunk ? 'sunk' : ''}" ${opt.onclick ? `onclick="${opt.onclick}"` : ''}>
+    <div class="name">${d.name}　<span class="muted">${d.shape.length}マス</span>${opt.extra || ''}</div>
+    ${miniShape(normalize(d.shape))}
+    <div class="skill"><b>${d.skill.name}</b>（間隔${d.skill.cd}）：${d.skill.desc}</div>${cdLine}</div>`;
+}
+
+// ---------- 編成 ----------
+function startCpu() { NET.on = false; N = +$('size-sel').value; BUDGET = SIZE_BUDGET[N]; goFleet(); }
+function goFleet() {
+  myPick = []; $('fleet-wait').textContent = ''; $('btn-fleet-ok').style.display = '';
+  $('budget-max').textContent = $('budget-max2').textContent = BUDGET;
+  renderFleet(); show('s-fleet');
+}
+function used(pick) { return pick.reduce((a, k) => a + shapeSize(k), 0); }
+function renderFleet() {
+  $('fleet-cards').innerHTML = SHIPS.map(s => cardHTML(s.key, { sel: myPick.includes(s.key), onclick: `togglePick('${s.key}')` })).join('');
+  $('budget-now').textContent = used(myPick);
+  $('btn-fleet-ok').disabled = !(myPick.length >= MIN_SHIPS && used(myPick) <= BUDGET);
+}
+function togglePick(k) {
+  if (myPick.includes(k)) myPick = myPick.filter(x => x !== k);
+  else if (used(myPick) + shapeSize(k) <= BUDGET) myPick.push(k);
+  else { sfx('invalid'); return; }
+  sfx('click'); renderFleet();
+}
+function cpuChooseFleet() {
+  // 予算内でできるだけマスを使う組み合わせからランダム
+  const keys = SHIPS.map(s => s.key), combos = [];
+  for (let m = 1; m < (1 << keys.length); m++) {
+    const c = keys.filter((_, i) => m & (1 << i));
+    if (c.length >= MIN_SHIPS && used(c) <= BUDGET) combos.push(c);
+  }
+  const best = Math.max(...combos.map(used));
+  const good = combos.filter(c => used(c) >= best - 1);
+  return good[Math.floor(Math.random() * good.length)];
+}
+function revealFleets() {
+  overlay('編成公開', `<p>相手${NET.on ? '' : '（CPU）'}の編成</p><div class="cards">${cpuPick.map(k => cardHTML(k)).join('')}</div>`,
+    '配置へ', () => goPlace());
+}
+async function confirmFleet() {
+  if (NET.on) {
+    NET.f.mine = { pick: myPick.slice(), salt: salt() };
+    NET.send('fleetHash', { h: await sha(JSON.stringify(NET.f.mine)) });
+    NET.f.sentHash = true;
+    $('btn-fleet-ok').style.display = 'none';
+    $('fleet-wait').textContent = '相手の編成を待っています…';
+    return fleetProgress();
+  }
+  cpuPick = cpuChooseFleet();
+  overlay('編成公開', `<p>相手（CPU）の編成</p><div class="cards">${cpuPick.map(k => cardHTML(k)).join('')}</div>`,
+    '配置へ', () => goPlace());
+}
+
+// ---------- 配置 ----------
+function goPlace() {
+  $('place-wait').textContent = ''; $('btn-place-ok').style.display = '';
+  placing = { placed: {}, sel: myPick[0], orient: Object.fromEntries(myPick.map(k => [k, 0])), hover: null };
+  buildBoard('place-board', i => placeClick(i), i => { placing.hover = i; renderPlace(); }, () => { placing.hover = null; renderPlace(); });
+  $('place-board').oncontextmenu = e => { e.preventDefault(); rotateSel(); };
+  $('place-op').innerHTML = cpuPick.map(k => cardHTML(k)).join('');
+  renderPlace(); show('s-place');
+}
+function curShape(k) { const o = ORIENTS[k]; return o[placing.orient[k] % o.length]; }
+function rotateSel() {
+  if (!placing || !placing.sel) return;
+  const o = ORIENTS[placing.sel], cur = curShape(placing.sel), r = JSON.stringify(rot(cur));
+  placing.orient[placing.sel] = o.findIndex(s => JSON.stringify(s) === r); renderPlace();
+}
+function flipSel() {
+  if (!placing || !placing.sel) return;
+  const o = ORIENTS[placing.sel], f = JSON.stringify(flip(curShape(placing.sel)));
+  placing.orient[placing.sel] = o.findIndex(s => JSON.stringify(s) === f); renderPlace();
+}
+function occupied(except) {
+  const s = new Set();
+  for (const [k, cells] of Object.entries(placing.placed)) if (k !== except) cells.forEach(c => s.add(c));
+  return s;
+}
+function previewCells() {
+  if (!placing.sel || placing.hover === null) return null;
+  const [x, y] = xy(placing.hover);
+  return placeCells(curShape(placing.sel), x, y);
+}
+function placeClick(i) {
+  const owner = Object.entries(placing.placed).find(([, cells]) => cells.includes(i));
+  if (owner && !placing.sel) { placing.sel = owner[0]; delete placing.placed[owner[0]]; renderPlace(); return; }
+  if (!placing.sel) return;
+  const cells = previewCells(), occ = occupied(placing.sel);
+  if (!cells || cells.some(c => occ.has(c))) return sfx('invalid');
+  placing.placed[placing.sel] = cells; sfx('place');
+  placing.sel = myPick.find(k => !placing.placed[k]) || null;
+  renderPlace();
+}
+function randomFleetPlacement(keys) {
+  for (let tries = 0; tries < 500; tries++) {
+    const occ = new Set(), res = [];
+    let ok = true;
+    for (const k of keys) {
+      let placed = false;
+      for (let t = 0; t < 200 && !placed; t++) {
+        const o = ORIENTS[k][Math.floor(Math.random() * ORIENTS[k].length)];
+        const cells = placeCells(o, Math.floor(Math.random() * N), Math.floor(Math.random() * N));
+        if (cells && !cells.some(c => occ.has(c))) { cells.forEach(c => occ.add(c)); res.push({ key: k, cells }); placed = true; }
+      }
+      if (!placed) { ok = false; break; }
+    }
+    if (ok) return res;
+  }
+  throw new Error('配置できません');
+}
+function randomPlace() {
+  placing.placed = Object.fromEntries(randomFleetPlacement(myPick).map(p => [p.key, p.cells]));
+  placing.sel = null; renderPlace();
+}
+function resetPlace() { placing.placed = {}; placing.sel = myPick[0]; renderPlace(); }
+function renderPlace() {
+  const cells = $('place-board').querySelectorAll('.cell');
+  const prev = previewCells(), occ = occupied(placing.sel);
+  const bad = !prev || prev.some(c => occ.has(c));
+  const prevSet = new Set(prev || []);
+  cells.forEach((el, i) => {
+    el.className = 'cell';
+    if (occ.has(i) || (!placing.sel && Object.values(placing.placed).some(c => c.includes(i)))) el.classList.add('ship');
+    if (prevSet.has(i)) el.classList.add(bad ? 'bad' : 'prev');
+  });
+  $('place-my').innerHTML = myPick.map(k => cardHTML(k, {
+    sel: placing.sel === k, onclick: `selPlace('${k}')`,
+    extra: placing.placed[k] ? ' <span class="ready">配置済</span>' : ''
+  })).join('');
+  $('btn-place-ok').disabled = myPick.some(k => !placing.placed[k]);
+}
+function selPlace(k) { if (placing.placed[k]) delete placing.placed[k]; placing.sel = k; renderPlace(); }
+
+document.addEventListener('keydown', e => {
+  if ($('s-place').classList.contains('active')) {
+    if (e.key === 'r' || e.key === 'R') rotateSel();
+    if (e.key === 'f' || e.key === 'F') flipSel();
+  }
+  if ($('s-battle').classList.contains('active') && (e.key === 'r' || e.key === 'R') && ui.mode === 'recon') {
+    ui.axis = ui.axis === 'row' ? 'col' : 'row'; renderBattle();
+  }
+  if (e.key === 'Escape' && $('s-battle').classList.contains('active')) cancelSkill();
+});
+
+// ---------- 盤面DOM ----------
+function buildBoard(id, onClick, onHover, onLeave) {
+  const b = $(id); b.style.setProperty('--n', N); b.innerHTML = '<div></div>';
+  for (let x = 0; x < N; x++) b.innerHTML += `<div class="lbl" data-col="${x}">${'ABCDEFGHIJ'[x]}</div>`;
+  for (let y = 0; y < N; y++) {
+    b.innerHTML += `<div class="lbl" data-row="${y}">${y + 1}</div>`;
+    for (let x = 0; x < N; x++) b.innerHTML += `<div class="cell" data-i="${idx(x, y)}"></div>`;
+  }
+  b.querySelectorAll('.cell').forEach(el => {
+    const i = +el.dataset.i;
+    if (onClick) el.onclick = () => onClick(i);
+    if (onHover) el.onmouseenter = () => onHover(i);
+  });
+  if (onLeave) b.onmouseleave = onLeave;
+}
+
+// ---------- 戦闘 ----------
+async function confirmPlace() {
+  if (!NET.on) return startBattle();
+  NET.b.mine = { placements: myPick.map(k => ({ key: k, cells: placing.placed[k] })), salt: salt() };
+  NET.send('boardHash', { h: await sha(JSON.stringify(NET.b.mine)) });
+  NET.b.sent = true;
+  $('btn-place-ok').style.display = 'none';
+  $('place-wait').textContent = '相手の配置を待っています…';
+  boardProgress();
+}
+function startBattle() {
+  const mine = myPick.map(k => ({ key: k, cells: placing.placed[k] }));
+  const op = NET.on ? cpuPick.map(k => ({ key: k, cells: [] }))   // オンライン：相手の位置は知らない
+                    : randomFleetPlacement(cpuPick);
+  G = { p: [makePlayer(mine), makePlayer(op)], turn: 0, log: [], over: false, turnNo: 1, audit: [] };
+  G.cpu = makeCpuBrain();
+  ui = { mode: 'fire', ship: null, axis: 'row', rapidLeft: 0, hover: null, last: [], busy: false };
+  buildBoard('enemy-board', i => enemyClick(i), i => { ui.hover = i; renderBattle(); }, () => { ui.hover = null; renderBattle(); });
+  $('enemy-board').oncontextmenu = e => { e.preventDefault(); if (ui.mode === 'recon') { ui.axis = ui.axis === 'row' ? 'col' : 'row'; renderBattle(); } };
+  buildBoard('my-board');
+  G.first = NET.on ? NET.first : (Math.random() < 0.5 ? 0 : 1);
+  G.turn = G.first;
+  log(G.turn === 0 ? 'あなたの先攻！' : (NET.on ? '相手の先攻。' : 'CPUの先攻。'), 'sys');
+  show('s-battle');
+  beginTurn();
+}
+
+function log(msg, who) {
+  G.log.unshift(`<div class="${who === 0 ? 'me' : who === 1 ? 'op' : ''}">${msg}</div>`);
+  $('log').innerHTML = G.log.slice(0, 80).join('');
+}
+
+function beginTurn() {
+  const P = G.p[G.turn];
+  P.diving = false; // 潜航は自分の次のターン開始で解除
+  P.fleet.forEach(s => { if (s.cd > 0) s.cd--; });
+  ui.mode = 'fire'; ui.ship = null; ui.rapidLeft = 0;
+  renderBattle();
+  const wait = (ui.fxDelay || 0);
+  ui.fxDelay = 0;
+  if (G.turn === 1) { ui.busy = true; if (!NET.on) setTimeout(cpuTurn, 700 + wait); }
+  else { ui.busy = true; setTimeout(() => { ui.busy = false; sfx('myTurn'); renderBattle(); }, wait); }
+}
+function endTurn() {
+  if (!alive(G.p[1 - G.turn])) return finish(G.turn);
+  G.turn = 1 - G.turn;
+  if (G.turn === G.first) G.turnNo++;
+  beginTurn();
+}
+function finish(winner) {
+  if (G.over) return;
+  G.over = true; ui.busy = true; renderBattle(true);
+  if (NET.on) NET.send('reveal', NET.b.mine);           // 自分の配置を公開して答え合わせ
+  const wait = (ui.fxDelay || 0) + 900; ui.fxDelay = 0;
+  setTimeout(() => {
+    sfx(winner === 0 ? 'win' : 'lose');
+    overlay(winner === 0 ? '勝利！' : '敗北…',
+      `<p>${G.turnNo}ターン目で決着</p><p class="muted">「相手の海域」に相手の艦の位置を表示しています</p>` +
+      (NET.on ? `<p id="verify" class="muted">相手の配置を確認中…</p>` : ''),
+      'もう一度', () => NET.on ? NET.again() : goFleet());
+    if (NET.on && NET.verifyText) $('verify').innerHTML = NET.verifyText;
+  }, wait);
+}
+
+function shipName(k) { return SHIP[k].name; }
+function reportShot(a, i, r) {
+  const who = a === 0 ? 'あなた' : (NET.on ? '相手' : 'CPU');
+  let m = `${who}：${posName(i)} → ${r.result === 'hit' ? '<b>命中</b>' : '外れ'}`;
+  if (r.sunkKey) m += `　<b>${shipName(r.sunkKey)}を撃沈！</b>`;
+  log(m, a);
+  const board = a === 0 ? 'enemy-board' : 'my-board';
+  fx(() => {
+    if (r.sunkKey) { sfx('sunk'); popup(board, i, `${shipName(r.sunkKey)} 撃沈！`, 'sunk'); flash(board, i, 'boom'); $(board).classList.add('shake'); setTimeout(() => $(board).classList.remove('shake'), 400); }
+    else if (r.result === 'hit') { sfx('hit'); popup(board, i, '命中！', 'hit'); flash(board, i, 'boom'); }
+    else { sfx('miss'); popup(board, i, r.fake ? '外れ…？' : '外れ', 'miss'); flash(board, i, 'splash'); }
+  });
+}
+
+// 結果パケットを両者の画面に反映（攻撃側・防御側どちらのクライアントでも同じ処理）。ターン終了なら true
+function applyAction(a, action, pk) {
+  const A = G.p[a], D = G.p[1 - a], who = a === 0 ? 'あなた' : (NET.on ? '相手' : 'CPU');
+  const board = a === 0 ? 'enemy-board' : 'my-board';
+  ui.last = [];
+  if (!ui.fxDelay || ui.fxDelay < 0) ui.fxDelay = 0;
+  if (['fire', 'barrage', 'sonar', 'rapid'].includes(action.type)) { sfx('fire'); ui.fxDelay = Math.max(ui.fxDelay, 350); }
+  const ship = action.ship !== undefined ? A.fleet[action.ship] : null;
+  if (ship) ship.cd = SHIP[ship.key].skill.cd; // 自分のターン開始ごとに1減る
+  if (action.type === 'barrage') { const c = barrageCells(action.i); log(`${who}：<b>一斉砲撃</b>（${posName(c[0])}〜${posName(c[3])}）`, a); }
+  for (const r of (pk ? pk.shots : [])) {
+    A.view[r.i] = r.result === 'hit' ? 'hit' : (D.diving ? 'dmiss' : 'miss');
+    if (r.sunkKey) {
+      const s = D.fleet.find(x => x.key === r.sunkKey);
+      s.sunk = true; if (!s.cells.length) s.cells = r.sunkCells;
+      r.sunkCells.forEach(c => A.view[c] = 'sunk');
+    }
+    reportShot(a, r.i, { ...r, fake: r.result === 'miss' && D.diving });
+  }
+  switch (action.type) {
+    case 'fire': case 'rapid': ui.last = [action.i]; break;
+    case 'barrage': ui.last = barrageCells(action.i); break;
+    case 'sonar': {
+      const n = pk.count;
+      sonarCells(action.i).forEach(c => A.intel[c] = n > 0 ? 'pos' : 'neg');
+      log(`${who}：<b>ソナー</b> → 周囲に艦の反応${n > 0 ? '<b>あり</b>' : 'なし'}`, a);
+      fx(() => { sfx(n > 0 ? 'sonarPos' : 'sonarNeg'); popup(board, action.i, n > 0 ? '反応あり' : '反応なし', 'info'); }); ui.fxDelay += 500;
+      ui.last = [action.i]; break;
+    }
+    case 'recon': {
+      const n = pk.count, [x, y] = xy(action.i);
+      if (action.axis === 'row') A.recon.row[y] = n; else A.recon.col[x] = n;
+      sfx('recon'); ui.fxDelay = Math.max(ui.fxDelay, 1000);
+      fx(() => popup(board, action.i, `残り${n}マス`, 'info'));
+      log(`${who}：<b>偵察機</b> → ${action.axis === 'row' ? (y + 1) + '行目' : 'ABCDEFGHIJ'[x] + '列'}に未被弾の艦マスが <b>${n}</b>`, a);
+      ui.last = lineCells(action.i, action.axis); break;
+    }
+    case 'dive':
+      A.diving = true; sfx('dive'); ui.fxDelay = Math.max(ui.fxDelay, 700);
+      log(`${who}：<b>潜水艦が潜航</b>（次の相手ターン、潜水艦への命中は外れになる）`, a); break;
+  }
+  return action.type === 'rapid' ? !!action.lastShot : true;
+}
+// ローカル（CPU戦）：その場で判定して反映
+function act(a, action) {
+  const pk = NEEDS_RESOLVE.includes(action.type) ? resolveAction(G.p[1 - a], action, G.p[a].view) : null;
+  return applyAction(a, action, pk);
+}
+// 自分の行動：CPU戦ならその場で、オンラインなら相手に判定してもらう
+async function playerAct(action) {
+  if (!NET.on) return act(0, action);
+  ui.busy = true; renderBattle();
+  let pk = null;
+  if (NEEDS_RESOLVE.includes(action.type)) {
+    const expect = targetCells(action, G.p[0].view);
+    pk = await NET.request(action);
+    G.audit.push({ action, pk, expect, defDiving: G.p[1].diving });
+  } else NET.send('act', { action });
+  const ends = applyAction(0, action, pk);
+  ui.busy = false;
+  return ends;
+}
+
+// ---------- プレイヤー操作 ----------
+function myTurn() { return G && !G.over && G.turn === 0 && !ui.busy; }
+async function useSkill(si) {
+  if (!myTurn() || ui.rapidLeft) return;
+  const s = G.p[0].fleet[si];
+  if (s.sunk || s.cd > 0) return;
+  const t = SHIP[s.key].skill.type;
+  if (ui.ship === si) {
+    if (t === 'dive') { await playerAct({ type: 'dive', ship: si }); return endTurn(); }
+    return cancelSkill();
+  }
+  ui.mode = t; ui.ship = si; sfx('click'); renderBattle();
+}
+function cancelSkill() { if (ui.rapidLeft) return; ui.mode = 'fire'; ui.ship = null; renderBattle(); }
+async function enemyClick(i) {
+  if (!myTurn()) return;
+  const V = G.p[0].view;
+  const m = ui.mode;
+  if (m === 'fire' || m === 'sonar') {
+    if (!canShoot(V, i)) return sfx('invalid');
+    await playerAct({ type: m, i, ship: m === 'sonar' ? ui.ship : undefined });
+    return endTurn();
+  }
+  if (m === 'barrage') {
+    if (!barrageCells(i).some(c => canShoot(V, c))) return sfx('invalid');
+    await playerAct({ type: 'barrage', i, ship: ui.ship }); return endTurn();
+  }
+  if (m === 'recon') { await playerAct({ type: 'recon', i, axis: ui.axis, ship: ui.ship }); return endTurn(); }
+  if (m === 'rapid') {
+    if (!canShoot(V, i)) return sfx('invalid');
+    if (!ui.rapidLeft) ui.rapidLeft = 2;
+    ui.rapidLeft--;
+    const last = ui.rapidLeft === 0;
+    const ends = await playerAct({ type: 'rapid', i, ship: last ? ui.ship : undefined, lastShot: last });
+    if (!alive(G.p[1])) return finish(0);
+    if (ends) return endTurn();
+    ui.fxDelay = 0; renderBattle();
+  }
+}
+
+function hoverCells() {
+  if (ui.hover === null || !myTurn()) return [];
+  switch (ui.mode) {
+    case 'barrage': return barrageCells(ui.hover);
+    case 'sonar': return sonarCells(ui.hover);
+    case 'recon': return lineCells(ui.hover, ui.axis);
+    default: return [ui.hover];
+  }
+}
+
+function renderBattle(reveal) {
+  const me = G.p[0], op = G.p[1];
+  const tb = $('turnbar');
+  tb.className = 'turnbar ' + (G.turn === 0 ? 'me' : 'op');
+  tb.textContent = G.over ? '決着' : (G.turn === 0 ? `あなたのターン（${G.turnNo}ターン目）` : (NET.on ? '相手のターン…' : 'CPUが考え中…'));
+
+  const modeText = {
+    fire: '通常攻撃：相手の海域を1マス選んで撃つ',
+    barrage: '一斉砲撃：2×2の範囲を選ぶ（Escでキャンセル）',
+    sonar: 'ソナー弾：撃つマスを選ぶ。周囲のひし形範囲を探知（Escでキャンセル）',
+    recon: `偵察機：${ui.axis === 'row' ? '横1行' : '縦1列'}を選ぶ（R／右クリックで縦横切替、Escでキャンセル）`,
+    rapid: `連射：あと${ui.rapidLeft || 2}発`,
+    dive: '潜航：潜水艦のカードをもう一度クリックで確定（Escでキャンセル）',
+  };
+  $('modebar').textContent = myTurn() ? modeText[ui.mode] : '';
+
+  // 相手盤面
+  const hov = new Set(hoverCells()), last = new Set(ui.last);
+  const eb = $('enemy-board');
+  eb.classList.toggle('clickable', myTurn());
+  eb.querySelectorAll('.cell').forEach((el, i) => {
+    el.className = 'cell';
+    const v = me.view[i]; if (v) el.classList.add(v);
+    if (!v && me.intel[i]) el.classList.add(me.intel[i]);
+    if (reveal && !v && shipAt(op, i)) el.classList.add('ship');
+    if (hov.has(i)) el.classList.add('prev');
+    if (G.turn === 1 && last.has(i)) el.classList.add('last');
+  });
+  eb.querySelectorAll('[data-row]').forEach(el => { const r = me.recon.row[+el.dataset.row]; el.textContent = r === null ? +el.dataset.row + 1 : r; el.classList.toggle('rc', r !== null); el.title = r === null ? '' : `偵察：残り${r}マス`; });
+  eb.querySelectorAll('[data-col]').forEach(el => { const c = me.recon.col[+el.dataset.col]; el.textContent = c === null ? 'ABCDEFGHIJ'[+el.dataset.col] : c; el.classList.toggle('rc', c !== null); });
+
+  // 自分盤面
+  const mb = $('my-board');
+  mb.querySelectorAll('.cell').forEach((el, i) => {
+    el.className = 'cell';
+    const s = shipAt(me, i);
+    if (s) el.classList.add(s.key === 'submarine' && me.diving && !s.sunk ? 'diving' : 'ship');
+    const v = op.view[i];
+    if (v === 'hit' || v === 'sunk') el.classList.add('hit');
+    else if (v) el.classList.add('miss');
+    if (G.turn === 0 && last.has(i)) el.classList.add('last');
+  });
+  mb.querySelectorAll('[data-row]').forEach(el => { el.textContent = +el.dataset.row + 1; });
+
+  // 艦隊パネル
+  $('op-fleet').innerHTML = op.fleet.map(s => cardHTML(s.key, { cd: s.cd, sunk: s.sunk,
+    extra: (s.key === 'submarine' && op.diving && !s.sunk) ? ' <span style="color:#b39ddb">潜航中</span>' : '' })).join('');
+  $('my-fleet').innerHTML = me.fleet.map((s, si) => cardHTML(s.key, { cd: s.cd, sunk: s.sunk, sel: ui.ship === si,
+    onclick: `useSkill(${si})`, extra: ` <span class="muted">${s.hit.size}/${s.cells.length}被弾</span>` })).join('');
+}
+
+// =====================================================================
+// オンライン対戦（Supabase Realtime Broadcast：DBは使わない）
+// =====================================================================
+const SUPABASE_URL = 'https://dchxyzxcbouqhtyxrojg.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Fll10HbQox-Ewe4_xUaxbw_iCLKZ8Y6';  // publishable key（公開してOKな鍵）
+
+function salt() { const a = new Uint8Array(16); crypto.getRandomValues(a); return [...a].map(x => x.toString(16).padStart(2, '0')).join(''); }
+async function sha(str) {
+  if (!(window.crypto && crypto.subtle)) return 'nohash';
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+const NET = {
+  on: false, host: false, code: null, chan: null, sb: null, seq: 0, pending: {}, first: 0,
+  f: {}, b: {}, myAgain: false, opAgain: false, verifyText: '', connected: false,
+  send(event, payload) { if (this.chan) this.chan.send({ type: 'broadcast', event, payload }); },
+  request(action) {
+    const seq = ++this.seq;
+    return new Promise(res => { this.pending[seq] = res; this.send('act', { seq, action }); });
+  },
+  resetRound() { this.f = {}; this.b = {}; this.myAgain = false; this.opAgain = false; this.verifyText = ''; this.pending = {}; },
+  again() {
+    this.myAgain = true; this.send('again', {});
+    overlay('もう一度', '<p>相手の準備を待っています…</p>', 'タイトルへ', () => leaveRoom());
+    if (this.opAgain && this.host) hostStart();
+  },
+};
+
+function loadSB() {
+  return new Promise((resolve, reject) => {
+    if (NET.sb) return resolve();
+    const make = () => { NET.sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY); resolve(); };
+    if (window.supabase) return make();
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js';
+    sc.onload = make; sc.onerror = () => reject(new Error('Supabaseの読み込みに失敗'));
+    document.head.appendChild(sc);
+  });
+}
+const lobbyMsg = t => $('lobby-msg').textContent = t;
+
+async function createRoom() {
+  sfx('click');
+  NET.host = true; NET.code = String(Math.floor(1000 + Math.random() * 9000));
+  N = +$('size-sel').value; BUDGET = SIZE_BUDGET[N];
+  $('lobby-code').textContent = NET.code; lobbyMsg('接続中…'); show('s-lobby');
+  try { await loadSB(); } catch (e) { return lobbyMsg(e.message); }
+  joinChannel();
+}
+async function joinRoom() {
+  const code = $('code-in').value.trim();
+  if (!/^\d{4}$/.test(code)) return sfx('invalid');
+  sfx('click');
+  NET.host = false; NET.code = code;
+  $('lobby-code').textContent = code; lobbyMsg('接続中…'); show('s-lobby');
+  try { await loadSB(); } catch (e) { return lobbyMsg(e.message); }
+  joinChannel();
+}
+function leaveRoom() {
+  if (NET.chan) NET.chan.unsubscribe();
+  NET.chan = null; NET.on = false; NET.connected = false; NET.resetRound();
+  $('ov').classList.remove('open'); show('s-title');
+}
+
+function joinChannel() {
+  if (NET.chan) NET.chan.unsubscribe();
+  const me = (NET.host ? 'host-' : 'guest-') + salt().slice(0, 6);
+  const ch = NET.sb.channel('fleet:' + NET.code, { config: { broadcast: { self: false }, presence: { key: me } } });
+  NET.chan = ch;
+  ch.on('broadcast', { event: 'hello' }, () => { if (NET.host && !NET.connected) { NET.connected = true; hostStart(); } })
+    .on('broadcast', { event: 'start' }, ({ payload }) => { if (!NET.host) { NET.connected = true; beginOnlineRound(payload); } })
+    .on('broadcast', { event: 'fleetHash' }, ({ payload }) => { NET.f.opHash = payload.h; fleetProgress(); })
+    .on('broadcast', { event: 'fleet' }, ({ payload }) => { NET.f.op = payload; fleetProgress(); })
+    .on('broadcast', { event: 'boardHash' }, ({ payload }) => { NET.b.opHash = payload.h; boardProgress(); })
+    .on('broadcast', { event: 'act' }, ({ payload }) => onOpponentAct(payload))
+    .on('broadcast', { event: 'res' }, ({ payload }) => { const r = NET.pending[payload.seq]; if (r) { delete NET.pending[payload.seq]; r(payload.pk); } })
+    .on('broadcast', { event: 'reveal' }, ({ payload }) => onReveal(payload))
+    .on('broadcast', { event: 'again' }, () => { NET.opAgain = true; if (NET.myAgain && NET.host) hostStart(); })
+    .on('presence', { event: 'join' }, ({ key }) => { if (NET.host && key !== me && !NET.connected) { NET.connected = true; hostStart(); } })
+    .on('presence', { event: 'leave' }, ({ key }) => {
+      if (key === me || !NET.connected) return;
+      NET.connected = false;
+      overlay('相手が切断しました', '<p>通信が切れました。</p>', 'タイトルへ', () => leaveRoom());
+    })
+    .subscribe(async status => {
+      if (status === 'SUBSCRIBED') {
+        await ch.track({ at: Date.now() });
+        if (NET.host) lobbyMsg('このコードを相手に伝えてね。参加を待っています…');
+        else { lobbyMsg('ホストの開始を待っています…'); NET.send('hello', {}); }
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') lobbyMsg('接続に失敗しました（' + status + '）');
+    });
+}
+
+// ホストが盤面サイズと先攻を決めて開始
+function hostStart() {
+  const p = { n: N, hostFirst: Math.random() < 0.5 };
+  NET.send('start', p); beginOnlineRound(p);
+}
+function beginOnlineRound(p) {
+  NET.on = true; NET.resetRound();
+  N = p.n; BUDGET = SIZE_BUDGET[N];
+  NET.first = (p.hostFirst === NET.host) ? 0 : 1;
+  $('ov').classList.remove('open'); sfx('myTurn');
+  goFleet();
+}
+
+// 編成：ハッシュを先に交換 → 両方そろったら中身を公開（後出し防止）
+async function fleetProgress() {
+  const f = NET.f;
+  if (f.sentHash && f.opHash && !f.sentFleet) { f.sentFleet = true; NET.send('fleet', f.mine); }
+  if (f.sentFleet && f.op && !f.revealed) {
+    f.revealed = true;
+    const ok = await sha(JSON.stringify(f.op)) === f.opHash && validPick(f.op.pick);
+    cpuPick = f.op.pick;
+    revealFleets();
+    if (!ok) $('ov-body').insertAdjacentHTML('afterbegin', '<p style="color:var(--hit)">⚠ 相手の編成が事前の申告と一致しません</p>');
+  }
+}
+function validPick(pick) {
+  return Array.isArray(pick) && pick.every(k => SHIP[k]) && new Set(pick).size === pick.length && pick.length >= MIN_SHIPS && used(pick) <= BUDGET;
+}
+// 配置：ハッシュ（配置＋ランダム文字列）だけ送る。配置そのものは最後まで送らない
+function boardProgress() {
+  if (NET.b.sent && NET.b.opHash && !NET.b.started) { NET.b.started = true; startBattle(); }
+}
+
+// 相手の行動を受け取り、自分の盤面で判定して結果を返す
+function onOpponentAct({ seq, action }) {
+  if (!G || G.over || G.turn !== 1) return;
+  let pk = null;
+  if (NEEDS_RESOLVE.includes(action.type)) {
+    pk = resolveAction(G.p[0], action, G.p[1].view);
+    NET.send('res', { seq, pk });
+  }
+  const ends = applyAction(1, action, pk);
+  if (!alive(G.p[0])) return finish(1);
+  if (ends) endTurn(); else renderBattle();
+}
+
+// 終了後：相手の配置を受け取り、最初のハッシュと全ての申告結果を検証
+async function onReveal(rv) {
+  const res = await verifyReveal(rv);
+  NET.verifyText = res.ok ? '<span style="color:#7cf29c">✔ 相手の申告はすべて正しかった（ズルなし）</span>'
+                          : `<span style="color:var(--hit)">⚠ 不一致：${res.msg}</span>`;
+  if (Array.isArray(rv.placements) && G) {
+    for (const pl of rv.placements) { const s = G.p[1].fleet.find(x => x.key === pl.key); if (s && !s.cells.length) s.cells = pl.cells; }
+    renderBattle(true);
+  }
+  if ($('verify')) $('verify').innerHTML = NET.verifyText;
+}
+async function verifyReveal(rv) {
+  if (!rv || !Array.isArray(rv.placements)) return { ok: false, msg: '配置データが不正' };
+  if (await sha(JSON.stringify(rv)) !== NET.b.opHash) return { ok: false, msg: '最初に約束した配置と違う' };
+  const keys = rv.placements.map(p => p.key).sort().join(), want = cpuPick.slice().sort().join();
+  if (keys !== want) return { ok: false, msg: '編成と配置の艦が違う' };
+  const occ = new Set();
+  for (const pl of rv.placements) {
+    if (!pl.cells.every(c => Number.isInteger(c) && c >= 0 && c < N * N)) return { ok: false, msg: '盤面の外に艦がある' };
+    const norm = JSON.stringify(normalize(pl.cells.map(xy)));
+    if (!ORIENTS[pl.key].some(o => JSON.stringify(o) === norm)) return { ok: false, msg: `${shipName(pl.key)}の形がおかしい` };
+    for (const c of pl.cells) { if (occ.has(c)) return { ok: false, msg: '艦が重なっている' }; occ.add(c); }
+  }
+  const sim = makePlayer(rv.placements);
+  for (const rec of G.audit) {
+    sim.diving = rec.defDiving;
+    if (JSON.stringify(rec.pk.shots.map(s => s.i)) !== JSON.stringify(rec.expect)) return { ok: false, msg: '攻撃したマスの結果が抜けている' };
+    for (const sh of rec.pk.shots) {
+      const e = resolveShot(sim, sh.i);
+      if (e.result !== sh.result || (e.sunkKey || null) !== (sh.sunkKey || null) ||
+          (e.sunkCells && JSON.stringify(e.sunkCells) !== JSON.stringify(sh.sunkCells))) return { ok: false, msg: `${posName(sh.i)} の命中判定がウソだった` };
+    }
+    if (rec.action.type === 'sonar' && remainingIn(sim, sonarCells(rec.action.i)) !== rec.pk.count) return { ok: false, msg: 'ソナーの結果がウソだった' };
+    if (rec.action.type === 'recon' && remainingIn(sim, lineCells(rec.action.i, rec.action.axis)) !== rec.pk.count) return { ok: false, msg: '偵察機の結果がウソだった' };
+  }
+  return { ok: true };
+}
+
+// =====================================================================
+// CPU（確率密度で狙う）
+// =====================================================================
+function makeCpuBrain() { return { empty: new Set() }; }
+
+function density(a) {
+  const A = G.p[a], D = G.p[1 - a], V = A.view, empty = a === 1 ? G.cpu.empty : new Set();
+  const score = Array(N * N).fill(0);
+  const hits = []; for (let i = 0; i < N * N; i++) if (V[i] === 'hit') hits.push(i);
+  for (const s of D.fleet) {           // CPUは相手の編成（公開情報）だけを使う
+    if (s.sunk) continue;
+    for (const o of ORIENTS[s.key]) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const cells = placeCells(o, x, y); if (!cells) continue;
+      let ok = true, cover = 0;
+      for (const c of cells) {
+        const v = V[c];
+        if (v === 'miss' || v === 'sunk' || empty.has(c)) { ok = false; break; }
+        if (v === 'hit') cover++;
+      }
+      if (!ok) continue;
+      const w = 1 + cover * 40;
+      for (const c of cells) if (canShoot(V, c)) score[c] += w;
+    }
+  }
+  // 近くに残っている反応ありのソナーは少し加点
+  for (let i = 0; i < N * N; i++) if (A.intel[i] === 'pos' && canShoot(V, i)) score[i] *= 1.3;
+  return { score, hits };
+}
+function argmax(score, filter) {
+  let best = -1, cand = [];
+  score.forEach((v, i) => { if (filter && !filter(i)) return; if (v > best) { best = v; cand = [i]; } else if (v === best) cand.push(i); });
+  return cand[Math.floor(Math.random() * cand.length)];
+}
+
+function cpuTurn() {
+  if (G.over) return;
+  const A = G.p[1], V = A.view;
+  const ready = t => A.fleet.findIndex(s => !s.sunk && s.cd === 0 && SHIP[s.key].skill.type === t);
+  const { score, hits } = density(1);
+  const shootable = i => canShoot(V, i);
+
+  // 潜航：潜水艦が被弾中なら使う
+  const sub = A.fleet.find(s => s.key === 'submarine');
+  const di = ready('dive');
+  if (di >= 0 && sub.hit.size > 0 && Math.random() < 0.7) { act(1, { type: 'dive', ship: di }); return endTurn(); }
+
+  // 連射
+  const ri = ready('rapid');
+  if (ri >= 0) {
+    act(1, { type: 'rapid', i: argmax(score, shootable), lastShot: false });
+    if (!alive(G.p[0])) return finish(1);
+    const s2 = density(1).score;
+    const t2 = argmax(s2, shootable);
+    if (t2 !== undefined) act(1, { type: 'rapid', i: t2, ship: ri, lastShot: true });
+    return endTurn();
+  }
+  // 一斉砲撃：範囲合計が最大の2×2
+  const bi = ready('barrage');
+  if (bi >= 0) {
+    let best = -1, bc = null;
+    for (let y = 0; y < N - 1; y++) for (let x = 0; x < N - 1; x++) {
+      const cs = barrageCells(idx(x, y)), sum = cs.reduce((a, c) => a + score[c], 0);
+      if (sum > best) { best = sum; bc = idx(x, y); }
+    }
+    act(1, { type: 'barrage', i: bc, ship: bi }); return endTurn();
+  }
+  // ソナー弾：普通の射撃＋探知なので常に得
+  const si = ready('sonar');
+  const target = argmax(score, shootable);
+  if (si >= 0) {
+    act(1, { type: 'sonar', i: target, ship: si });
+    if (A.intel[target] === 'neg') sonarCells(target).forEach(c => { if (canShoot(V, c)) G.cpu.empty.add(c); });
+    return endTurn();
+  }
+  // 偵察機：追撃中でなければ、密度が一番高い列を偵察
+  const ci = ready('recon');
+  if (ci >= 0 && hits.length === 0) {
+    let best = -1, pick = null;
+    for (let k = 0; k < N; k++) for (const axis of ['row', 'col']) {
+      if ((axis === 'row' ? A.recon.row[k] : A.recon.col[k]) !== null) continue;
+      const i0 = axis === 'row' ? idx(0, k) : idx(k, 0);
+      const sum = lineCells(i0, axis).reduce((a, c) => a + score[c], 0);
+      if (sum > best) { best = sum; pick = { i: i0, axis }; }
+    }
+    if (pick) {
+      act(1, { type: 'recon', ...pick, ship: ci });
+      const n = pick.axis === 'row' ? A.recon.row[xy(pick.i)[1]] : A.recon.col[xy(pick.i)[0]];
+      if (n === 0) lineCells(pick.i, pick.axis).forEach(c => { if (canShoot(V, c)) G.cpu.empty.add(c); });
+      return endTurn();
+    }
+  }
+  act(1, { type: 'fire', i: target });
+  endTurn();
+}
+
+// ---------- オーバーレイ ----------
+function overlay(title, body, btn, cb) {
+  $('ov-title').textContent = title; $('ov-body').innerHTML = body; $('ov-btn').textContent = btn;
+  $('ov-btn').onclick = () => { $('ov').classList.remove('open'); cb(); };
+  $('ov').classList.add('open');
+}
+</script>
+</body>
+</html>
