@@ -70,6 +70,12 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 .cell.ship.hit{background:var(--hit)}
 .cell.pos{box-shadow:inset 0 0 0 2px var(--pos)}
 .cell.neg{box-shadow:inset 0 0 0 2px var(--neg)}
+.cell.reveal{background:repeating-linear-gradient(45deg,#2f6f4a 0 5px,#3d8b5a 5px 10px);outline:2px dashed #b9f6ca;outline-offset:-3px}
+.cell.reveal::after{content:attr(data-n);font-size:13px;font-weight:bold;color:#eafff0;width:auto;height:auto;border:0;opacity:1}
+.cell.reveal.trick{outline-color:#b39ddb}
+.endbar{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap}
+.cell.rock{background:radial-gradient(circle at 35% 30%,#9e9e9e,#5f5f5f 55%,#3e3e3e);border-radius:40% 45% 38% 50%;box-shadow:inset 0 -3px 0 #2a2a2a}
+.cell.rock::after{content:"";}
 .cell.prev{outline:2px solid var(--accent);outline-offset:-2px;background:#1f4d73}
 .cell.bad{outline:2px solid var(--hit);outline-offset:-2px}
 .cell.diving{background:#2c5a8a}
@@ -88,7 +94,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 .board.small{--c:30px}
 .board.small .cell{font-size:11px}
 .side .cards{grid-template-columns:1fr}
-.legend{font-size:.8em;color:var(--muted);margin-top:8px;line-height:1.7}
+.legend{font-size:.8em;color:var(--muted);margin-top:8px;line-height:1.7;max-width:380px}
 .legend span{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;margin-right:4px}
 .overlay{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:10}
 .overlay.open{display:flex}
@@ -137,7 +143,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 <!-- 配置 -->
 <section id="s-place" class="screen">
   <h2>配置</h2>
-  <p class="muted">艦を選んで盤面をクリック。<b>R</b>／右クリックで回転、<b>F</b>で反転。置いた艦をクリックすると拾い直せる。</p>
+  <p class="muted">艦を選んで盤面をクリック（岩の上には置けない）。<b>R</b>／右クリックで回転、<b>F</b>で反転。置いた艦をクリックすると拾い直せる。</p>
   <div class="row">
     <div class="panel side"><h3>相手の編成</h3><div class="cards" id="place-op"></div></div>
     <div class="boardwrap">
@@ -168,6 +174,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
       <div class="muted">相手の海域（ここを攻撃）</div>
       <div class="board" id="enemy-board"></div>
       <div class="legend">
+        <span style="background:#777;border-radius:40%"></span>岩
         <span style="background:var(--hit)"></span>命中
         <span style="background:var(--sunk)"></span>撃沈
         <span style="border:2px solid var(--pos)"></span>ソナー反応あり
@@ -191,7 +198,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
   <div class="panel">
     <h2 id="ov-title"></h2>
     <div id="ov-body"></div>
-    <p><button class="primary" id="ov-btn"></button></p>
+    <p><button id="ov-btn2" style="display:none"></button> <button class="primary" id="ov-btn"></button></p>
   </div>
 </div>
 
@@ -202,6 +209,8 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 let N = 8;               // 盤面サイズ（タイトル画面で変更可）
 let BUDGET = 14;         // 編成の合計マス上限
 const SIZE_BUDGET = { 8: 14, 9: 15, 10: 16 }; // 盤面サイズごとの予算
+const ROCK_COUNT = { 8: 5, 9: 6, 10: 8 };      // 岩の数（両者とも同じ配置）
+let ROCKS = [];
 const MIN_SHIPS = 2;
 
 // shape: 形を表すマスの座標 [x,y]
@@ -266,7 +275,7 @@ function makePlayer(placements) {
   return {
     fleet: placements.map(p => ({ key: p.key, cells: p.cells, hit: new Set(), sunk: false, cd: 0 })),
     diving: false,
-    view: Array(N * N).fill(null),   // 相手盤面の見え方: null|'miss'|'dmiss'|'hit'|'sunk'
+    view: Array(N * N).fill(null).map((_, i) => ROCKS.includes(i) ? 'rock' : null), // 相手盤面の見え方: null|'rock'|'miss'|'dmiss'|'hit'|'sunk'
     intel: Array(N * N).fill(null),  // ソナー結果: null|'pos'|'neg'
     recon: { row: Array(N).fill(null), col: Array(N).fill(null) },
   };
@@ -274,6 +283,20 @@ function makePlayer(placements) {
 
 function shipAt(player, i) { return player.fleet.find(s => s.cells.includes(i)); }
 function alive(player) { return player.fleet.some(s => !s.sunk); }
+// 岩：盤面に散らばった置けない・撃てないマス。艦が置けない場所がヒントになる
+function genRocks() {
+  for (let t = 0; t < 200; t++) {
+    const set = new Set();
+    while (set.size < ROCK_COUNT[N]) set.add(Math.floor(Math.random() * N * N));
+    const r = [...set];
+    // 岩同士がくっつきすぎない＆どの編成でも置けることを確認
+    const tooClose = r.some(a => r.some(b => a !== b && Math.abs(xy(a)[0] - xy(b)[0]) <= 1 && Math.abs(xy(a)[1] - xy(b)[1]) <= 1));
+    if (tooClose) continue;
+    ROCKS = r;
+    try { randomFleetPlacement(SHIPS.map(s => s.key)); return r; } catch (e) {}
+  }
+  return ROCKS;
+}
 function canShoot(view, i) { return view[i] === null || view[i] === 'dmiss'; }
 
 // ---- 防御側の判定（自分の盤面を持っている側だけが実行する） ----
@@ -422,6 +445,7 @@ function cardHTML(key, opt = {}) {
 // ---------- 編成 ----------
 function startCpu() { NET.on = false; N = +$('size-sel').value; BUDGET = SIZE_BUDGET[N]; goFleet(); }
 function goFleet() {
+  if (!NET.on) ROCKS = genRocks();
   myPick = []; $('fleet-wait').textContent = ''; $('btn-fleet-ok').style.display = '';
   $('budget-max').textContent = $('budget-max2').textContent = BUDGET;
   renderFleet(); show('s-fleet');
@@ -488,7 +512,7 @@ function flipSel() {
   placing.orient[placing.sel] = o.findIndex(s => JSON.stringify(s) === f); renderPlace();
 }
 function occupied(except) {
-  const s = new Set();
+  const s = new Set(ROCKS);
   for (const [k, cells] of Object.entries(placing.placed)) if (k !== except) cells.forEach(c => s.add(c));
   return s;
 }
@@ -509,7 +533,7 @@ function placeClick(i) {
 }
 function randomFleetPlacement(keys) {
   for (let tries = 0; tries < 500; tries++) {
-    const occ = new Set(), res = [];
+    const occ = new Set(ROCKS), res = [];
     let ok = true;
     for (const k of keys) {
       let placed = false;
@@ -536,7 +560,8 @@ function renderPlace() {
   const prevSet = new Set(prev || []);
   cells.forEach((el, i) => {
     el.className = 'cell';
-    if (occ.has(i) || (!placing.sel && Object.values(placing.placed).some(c => c.includes(i)))) el.classList.add('ship');
+    if (ROCKS.includes(i)) el.classList.add('rock');
+    else if (occ.has(i) || (!placing.sel && Object.values(placing.placed).some(c => c.includes(i)))) el.classList.add('ship');
     if (prevSet.has(i)) el.classList.add(bad ? 'bad' : 'prev');
   });
   $('place-my').innerHTML = myPick.map(k => cardHTML(k, {
@@ -625,18 +650,23 @@ function endTurn() {
 }
 function finish(winner) {
   if (G.over) return;
-  G.over = true; ui.busy = true; renderBattle(true);
+  G.over = true; G.winner = winner; ui.busy = true; renderBattle();
   if (NET.on) NET.send('reveal', NET.b.mine);           // 自分の配置を公開して答え合わせ
   const wait = (ui.fxDelay || 0) + 900; ui.fxDelay = 0;
   setTimeout(() => {
     sfx(winner === 0 ? 'win' : 'lose');
-    overlay(winner === 0 ? '勝利！' : '敗北…',
-      `<p>${G.turnNo}ターン目で決着</p><p class="muted">「相手の海域」に相手の艦の位置を表示しています</p>` +
-      (NET.on ? `<p id="verify" class="muted">相手の配置を確認中…</p>` : ''),
-      'もう一度', () => NET.on ? NET.again() : goFleet());
-    if (NET.on && NET.verifyText) $('verify').innerHTML = NET.verifyText;
+    showResult();
   }, wait);
 }
+
+function showResult() {
+  const w = G.winner;
+  overlay(w === 0 ? '勝利！' : '敗北…',
+    `<p>${G.turnNo}ターン目で決着</p>` +
+    (NET.on ? `<p id="verify" class="muted">${NET.verifyText || '相手の配置を確認中…'}</p>` : ''),
+    'もう一度', againClick, '相手の配置を見る', () => renderBattle());
+}
+function againClick() { NET.on ? NET.again() : goFleet(); }
 
 function shipName(k) { return SHIP[k].name; }
 function reportShot(a, i, r) {
@@ -769,7 +799,7 @@ function renderBattle(reveal) {
   const me = G.p[0], op = G.p[1];
   const tb = $('turnbar');
   tb.className = 'turnbar ' + (G.turn === 0 ? 'me' : 'op');
-  tb.textContent = G.over ? '決着' : (G.turn === 0 ? `あなたのターン（${G.turnNo}ターン目）` : (NET.on ? '相手のターン…' : 'CPUが考え中…'));
+  tb.textContent = G.over ? (G.winner === 0 ? '勝利！' : '敗北…') : (G.turn === 0 ? `あなたのターン（${G.turnNo}ターン目）` : (NET.on ? '相手のターン…' : 'CPUが考え中…'));
 
   const modeText = {
     fire: '通常攻撃：相手の海域を1マス選んで撃つ',
@@ -779,7 +809,10 @@ function renderBattle(reveal) {
     rapid: `連射：あと${ui.rapidLeft || 2}発`,
     dive: '潜航：潜水艦のカードをもう一度クリックで確定（Escでキャンセル）',
   };
-  $('modebar').textContent = myTurn() ? modeText[ui.mode] : '';
+  if (G.over) {
+    $('modebar').innerHTML = `<div class="endbar"><span>${(reveal || G.over) ? '縞模様のマスが相手の艦の位置です（文字は艦名の頭文字）' : ''}</span>
+      <button onclick="showResult()">結果</button><button class="primary" onclick="againClick()">もう一度</button></div>`;
+  } else $('modebar').textContent = myTurn() ? modeText[ui.mode] : '';
 
   // 相手盤面
   const hov = new Set(hoverCells()), last = new Set(ui.last);
@@ -789,7 +822,11 @@ function renderBattle(reveal) {
     el.className = 'cell';
     const v = me.view[i]; if (v) el.classList.add(v);
     if (!v && me.intel[i]) el.classList.add(me.intel[i]);
-    if (reveal && !v && shipAt(op, i)) el.classList.add('ship');
+    const os = (reveal || G.over) ? shipAt(op, i) : null;
+    if (os && v !== 'hit' && v !== 'sunk') {
+      el.classList.add('reveal'); el.dataset.n = SHIP[os.key].name[0];
+      if (v === 'dmiss') el.classList.add('trick');   // 潜航でかわされたマス
+    }
     if (hov.has(i)) el.classList.add('prev');
     if (G.turn === 1 && last.has(i)) el.classList.add('last');
   });
@@ -804,6 +841,7 @@ function renderBattle(reveal) {
     if (s) el.classList.add(s.key === 'submarine' && me.diving && !s.sunk ? 'diving' : 'ship');
     const v = op.view[i];
     if (v === 'hit' || v === 'sunk') el.classList.add('hit');
+    else if (v === 'rock') el.classList.add('rock');
     else if (v) el.classList.add('miss');
     if (G.turn === 0 && last.has(i)) el.classList.add('last');
   });
@@ -912,12 +950,13 @@ function joinChannel() {
 
 // ホストが盤面サイズと先攻を決めて開始
 function hostStart() {
-  const p = { n: N, hostFirst: Math.random() < 0.5 };
+  ROCKS = genRocks();
+  const p = { n: N, hostFirst: Math.random() < 0.5, rocks: ROCKS };
   NET.send('start', p); beginOnlineRound(p);
 }
 function beginOnlineRound(p) {
   NET.on = true; NET.resetRound();
-  N = p.n; BUDGET = SIZE_BUDGET[N];
+  N = p.n; BUDGET = SIZE_BUDGET[N]; ROCKS = Array.isArray(p.rocks) ? p.rocks : [];
   NET.first = (p.hostFirst === NET.host) ? 0 : 1;
   $('ov').classList.remove('open'); sfx('myTurn');
   goFleet();
@@ -977,7 +1016,7 @@ async function verifyReveal(rv) {
     if (!pl.cells.every(c => Number.isInteger(c) && c >= 0 && c < N * N)) return { ok: false, msg: '盤面の外に艦がある' };
     const norm = JSON.stringify(normalize(pl.cells.map(xy)));
     if (!ORIENTS[pl.key].some(o => JSON.stringify(o) === norm)) return { ok: false, msg: `${shipName(pl.key)}の形がおかしい` };
-    for (const c of pl.cells) { if (occ.has(c)) return { ok: false, msg: '艦が重なっている' }; occ.add(c); }
+    for (const c of pl.cells) { if (occ.has(c)) return { ok: false, msg: '艦が重なっている' }; if (ROCKS.includes(c)) return { ok: false, msg: '岩の上に艦がある' }; occ.add(c); }
   }
   const sim = makePlayer(rv.placements);
   for (const rec of G.audit) {
@@ -1010,7 +1049,7 @@ function density(a) {
       let ok = true, cover = 0;
       for (const c of cells) {
         const v = V[c];
-        if (v === 'miss' || v === 'sunk' || empty.has(c)) { ok = false; break; }
+        if (v === 'miss' || v === 'sunk' || v === 'rock' || empty.has(c)) { ok = false; break; }
         if (v === 'hit') cover++;
       }
       if (!ok) continue;
@@ -1090,9 +1129,11 @@ function cpuTurn() {
 }
 
 // ---------- オーバーレイ ----------
-function overlay(title, body, btn, cb) {
+function overlay(title, body, btn, cb, btn2, cb2) {
   $('ov-title').textContent = title; $('ov-body').innerHTML = body; $('ov-btn').textContent = btn;
   $('ov-btn').onclick = () => { $('ov').classList.remove('open'); cb(); };
+  $('ov-btn2').style.display = btn2 ? '' : 'none';
+  if (btn2) { $('ov-btn2').textContent = btn2; $('ov-btn2').onclick = () => { $('ov').classList.remove('open'); cb2(); }; }
   $('ov').classList.add('open');
 }
 </script>
