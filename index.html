@@ -249,7 +249,7 @@ const SHIPS = [
     skill:{ type:'salvo', name:'ロケット斉射', cd:3, desc:'相手の海域のまだ撃っていないマスから、ランダムに4マス攻撃' } },
   // ---- 特殊効果系 ----
   { key:'smoker', name:'煙幕艇', shape:[[0,0],[1,0],[2,0],[0,1],[2,1],[0,2],[1,2],[2,2]],
-    skill:{ type:'smoke', name:'煙幕', cd:3, desc:'自分の海域の3×3に煙を張る。次の相手ターン、そこへの攻撃は結果が「不明」になる（撃沈だけは隠せない）' } },
+    skill:{ type:'smoke', name:'煙幕', cd:3, desc:'自分の海域の3×3に煙を張る。相手の次の2ターンの間、そこへの攻撃は結果が「不明」になる（撃沈だけは隠せない）' } },
   { key:'repair', name:'工作艦', shape:[[0,0],[0,1],[1,1]],
     skill:{ type:'repair', name:'応急修理', cd:4, desc:'被弾した自分の艦のマスを1つ直す。どこを直したかは相手にわからない' } },
   { key:'jammer', name:'電子戦艦', shape:[[0,0],[1,1],[2,2]],
@@ -309,7 +309,8 @@ function makePlayer(placements) {
   return {
     fleet: placements.map(p => ({ key: p.key, cells: p.cells, hit: new Set(), sunk: false, cd: 0 })),
     diving: false,
-    smoke: [],          // 自分の海域で煙を張っているマス（次の相手ターンまで）
+    smoke: [],          // 自分の海域で煙を張っているマス
+    smokeLeft: 0,       // 煙幕が残る相手ターン数
     jam: false, jamNow: false, // jam: 次の自分のターンにスキル封印 / jamNow: このターン封印中
     mines: new Set(),   // 自分の海域の機雷（本人だけが知っている）
     spots: new Set(),   // 機雷で判明した相手の艦のマス
@@ -771,7 +772,9 @@ function log(msg, who) {
 
 function beginTurn() {
   const P = G.p[G.turn];
-  P.diving = false; P.smoke = [];   // 潜航・煙幕は自分の次のターン開始で解除
+  P.diving = false;                 // 潜航は自分の次のターン開始で解除
+  if (P.smokeLeft > 0) P.smokeLeft--; // 煙幕は相手の2ターン分残る
+  if (!P.smokeLeft) P.smoke = [];
   P.jamNow = P.jam; P.jam = false;  // ジャミングはこのターンだけ有効
   P.fleet.forEach(s => { if (s.cd > 0) s.cd--; });
   ui.mode = 'fire'; ui.ship = null; ui.rapidLeft = 0; ui.evShip = null;
@@ -869,9 +872,9 @@ function applyAction(a, action, pk, sec) {
       A.diving = true; sfx('dive'); ui.fxDelay = Math.max(ui.fxDelay, 700);
       log(`${who}：<b>潜水艦が潜航</b>（次の相手ターン、潜水艦への命中は外れになる）`, a); break;
     case 'smoke':
-      A.smoke = smokeCells(action.i); sfx('smoke'); ui.fxDelay = Math.max(ui.fxDelay, 700);
+      A.smoke = smokeCells(action.i); A.smokeLeft = 2; sfx('smoke'); ui.fxDelay = Math.max(ui.fxDelay, 700);
       fx(() => popup(ownBoard, action.i, '煙幕', 'info'));
-      log(`${who}：<b>煙幕</b>（${posName(action.i)} の周り3×3。次の相手ターン、結果が不明になる）`, a); break;
+      log(`${who}：<b>煙幕</b>（${posName(action.i)} の周り3×3。相手の2ターンの間、結果が不明になる）`, a); break;
     case 'jam':
       D.jam = true; sfx('jam'); ui.fxDelay = Math.max(ui.fxDelay, 700);
       log(`${who}：<b>ジャミング</b>（${a === 0 ? '相手' : 'あなた'}は次のターン、スキルを使えない）`, a); break;
