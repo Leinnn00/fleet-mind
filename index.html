@@ -248,18 +248,16 @@ const SHIPS = [
   { key:'rocket', name:'ロケット艦', shape:[[1,0],[2,0],[0,1],[1,1]],
     skill:{ type:'salvo', name:'ロケット斉射', cd:3, desc:'相手の海域のまだ撃っていないマスから、ランダムに4マス攻撃' } },
   // ---- 特殊効果系 ----
-  { key:'smoker', name:'煙幕艇', shape:[[0,0],[0,1]],
+  { key:'smoker', name:'煙幕艇', shape:[[0,0],[1,0],[2,0],[0,1],[2,1],[0,2],[1,2],[2,2]],
     skill:{ type:'smoke', name:'煙幕', cd:3, desc:'自分の海域の3×3に煙を張る。次の相手ターン、そこへの攻撃は結果が「不明」になる（撃沈だけは隠せない）' } },
   { key:'repair', name:'工作艦', shape:[[0,0],[0,1],[1,1]],
     skill:{ type:'repair', name:'応急修理', cd:4, desc:'被弾した自分の艦のマスを1つ直す。どこを直したかは相手にわからない' } },
   { key:'jammer', name:'電子戦艦', shape:[[0,0],[1,1],[2,2]],
     skill:{ type:'jam', name:'ジャミング', cd:4, desc:'相手の次のターン、相手はスキルを使えない' } },
-  { key:'supply', name:'補給艦', shape:[[0,0],[1,0],[2,0]],
+  { key:'supply', name:'補給艦', shape:[[0,0],[1,0],[0,1],[1,1],[0,2],[1,2]],
     skill:{ type:'supply', name:'補給', cd:5, desc:'自分の艦1隻のスキルを、すぐ使える状態にする' } },
-  { key:'minelayer', name:'機雷敷設艦', shape:[[0,0],[0,1],[0,2],[1,2]],
+  { key:'minelayer', name:'機雷敷設艦', shape:[[0,0],[0,1],[0,2],[1,2],[2,2]],
     skill:{ type:'mine', name:'機雷', cd:3, desc:'自分の海域の空きマスに見えない機雷を置く。相手が撃つと、相手の艦のマスが1つ判明する' } },
-  { key:'speedboat', name:'高速艇', shape:[[0,0],[1,0]],
-    skill:{ type:'evade', name:'緊急回避', cd:4, desc:'まだ被弾していない自分の艦1隻を、上下左右に1マス動かす。どの艦を動かしたかは相手にわからない' } },
 ];
 // 相手に中身を隠す行動（決着後に答え合わせする）
 const SECRET_TYPES = ['repair', 'mine', 'evade'];
@@ -333,11 +331,30 @@ function genRocks() {
     const tooClose = r.some(a => r.some(b => a !== b && Math.abs(xy(a)[0] - xy(b)[0]) <= 1 && Math.abs(xy(a)[1] - xy(b)[1]) <= 1));
     if (tooClose) continue;
     ROCKS = r;
-    try { randomFleetPlacement(SHIPS.map(s => s.key)); return r; } catch (e) {}
+    if (rocksOk()) return r;
   }
   return ROCKS;
 }
 // 撃てるマス：未攻撃・潜航中の外れ(?)・煙幕で不明・修理されたかもしれない命中
+// どの艦もある程度置ける＆予算いっぱいの編成も置けるか
+function rocksOk() {
+  for (const s of SHIPS) {
+    let n = 0;
+    for (const o of ORIENTS[s.key]) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const c = placeCells(o, x, y); if (c && !c.some(k => ROCKS.includes(k))) n++;
+    }
+    if (n < 6) return false;
+  }
+  const keys = SHIPS.map(s => s.key), big = [];
+  for (let m = 1; m < (1 << keys.length); m++) {
+    const c = keys.filter((_, i) => m & (1 << i));
+    if (c.length >= MIN_SHIPS && c.length <= MAX_SHIPS && used(c) === BUDGET) big.push(c);
+  }
+  for (let t = 0; t < 25 && big.length; t++) {
+    try { randomFleetPlacement(big[Math.floor(Math.random() * big.length)]); } catch (e) { return false; }
+  }
+  return true;
+}
 function canShoot(view, i) { return view[i] === null || view[i] === 'dmiss' || view[i] === 'fog' || view[i] === 'rhit'; }
 
 // ---- 防御側の判定（自分の盤面を持っている側だけが実行する） ----
