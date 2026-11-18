@@ -31,6 +31,16 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 .card.sunk{opacity:.45}
 .card.sunk::after{content:"撃沈";position:absolute;top:8px;right:10px;color:var(--hit);font-weight:bold}
 .card .name{font-weight:bold}
+.card{border-left-width:5px}
+.card.cat-attack{border-left-color:#ef5350}
+.card.cat-search{border-left-color:#42a5f5}
+.card.cat-assist{border-left-color:#ab47bc}
+.cat-tag{display:inline-block;white-space:nowrap;font-size:.72em;font-weight:bold;border-radius:6px;padding:1px 6px;margin-left:4px;vertical-align:middle}
+.cat-tag.cat-attack{background:#ef535033;color:#ff8a80}
+.cat-tag.cat-search{background:#42a5f533;color:#90caf9}
+.cat-tag.cat-assist{background:#ab47bc33;color:#e1bee7}
+.cat-head{margin:18px 0 8px;font-size:1.05em;display:flex;align-items:baseline;gap:10px}
+.cat-head .muted{font-weight:normal}
 .card .skill{font-size:.85em;color:var(--muted);margin-top:4px}
 .card .cd{font-size:.8em;margin-top:4px}
 .ready{color:#7cf29c}
@@ -135,7 +145,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
   <div style="text-align:left;margin-top:30px">
     <h2 class="center">艦の一覧</h2>
     <p class="muted center" id="title-rule"></p>
-    <div class="cards" id="title-ships"></div>
+    <div id="title-ships"></div>
   </div>
 </section>
 
@@ -151,7 +161,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 <section id="s-fleet" class="screen">
   <h2>編成</h2>
   <p class="muted">合計 <b id="budget-max"></b> マス以内で艦を選ぶ（同じ艦は1隻まで、2〜5隻）。編成はお互い同時に公開される。</p>
-  <div class="cards" id="fleet-cards"></div>
+  <div id="fleet-cards"></div>
   <p id="fleet-wait" class="center" style="color:var(--pos)"></p>
   <p class="center">使用マス：<b id="budget-now">0</b> / <span id="budget-max2"></span>
     &nbsp;<button class="primary" id="btn-fleet-ok" onclick="confirmFleet()" disabled>この編成で決定</button></p>
@@ -254,7 +264,7 @@ const SHIPS = [
     skill:{ type:'salvo', name:'ロケット斉射', cd:3, desc:'相手の海域のまだ撃っていないマスから、ランダムに4マス攻撃' } },
   // ---- 特殊効果系 ----
   { key:'smoker', name:'煙幕艇', shape:[[0,0],[1,0],[2,0],[0,1],[2,1],[0,2],[1,2],[2,2]],
-    skill:{ type:'smoke', name:'煙幕', cd:3, desc:'自分の海域の3×3に煙を張る。相手の次の2ターンの間、そこへの攻撃は結果が「不明」になる（撃沈だけは隠せない）' } },
+    skill:{ type:'smoke', name:'煙幕', cd:3, desc:'自分の海域の3×3にこっそり煙を張り、同じターンに通常攻撃も1発撃てる。相手の次の2ターンの間、煙の中への攻撃は結果が「不明」になる（撃沈だけは隠せない）。煙の場所は相手に見えない' } },
   { key:'repair', name:'工作艦', shape:[[0,0],[0,1],[1,1]],
     skill:{ type:'repair', name:'応急修理', cd:4, desc:'被弾した自分の艦のマスを1つ直す。どこを直したかは相手にわからない' } },
   { key:'jammer', name:'電子戦艦', shape:[[0,0],[1,1],[2,2]],
@@ -265,8 +275,25 @@ const SHIPS = [
     skill:{ type:'mine', name:'機雷', cd:3, desc:'自分の海域の空きマスに見えない機雷を2個置く。相手が撃つと、相手の艦のマスが1つ判明する' } },
 ];
 // 相手に中身を隠す行動（決着後に答え合わせする）
-const SECRET_TYPES = ['repair', 'mine', 'evade'];
+const SECRET_TYPES = ['repair', 'mine', 'evade', 'smoke'];
 const SHIP = Object.fromEntries(SHIPS.map(s => [s.key, s]));
+// ジャンル分け
+const CATS = [
+  { key: 'attack', name: '攻撃系', desc: '複数マスをまとめて撃つ' },
+  { key: 'search', name: 'サーチ系', desc: '相手の艦の位置を探る' },
+  { key: 'assist', name: 'アシスト系', desc: '守る・邪魔する・味方を助ける' },
+];
+const CAT_OF = {
+  battleship: 'attack', gunboat: 'attack', destroyer: 'attack', rocket: 'attack',
+  carrier: 'search', cruiser: 'search', minelayer: 'search',
+  submarine: 'assist', smoker: 'assist', repair: 'assist', jammer: 'assist', supply: 'assist',
+};
+const catName = k => CATS.find(c => c.key === CAT_OF[k]).name;
+// ジャンルごとに見出しを付けてカードを並べる
+function groupedCards(cardFn) {
+  return CATS.map(c => `<div class="cat-head"><span class="cat-tag cat-${c.key}">${c.name}</span><span class="muted">${c.desc}</span></div>
+    <div class="cards">${SHIPS.filter(s => CAT_OF[s.key] === c.key).sort((a, b) => a.shape.length - b.shape.length).map(s => cardFn(s.key)).join('')}</div>`).join('');
+}
 
 // =====================================================================
 // 形ユーティリティ
@@ -437,14 +464,14 @@ function salvoKey(a) {
 }
 function targetCells(action, attackerView) {
   switch (action.type) {
-    case 'fire': case 'sonar': case 'rapid': case 'jam': return [action.i];
+    case 'fire': case 'sonar': case 'rapid': case 'jam': case 'smoke': return [action.i];
     case 'barrage': return barrageCells(action.i).filter(c => canShoot(attackerView, c));
     case 'cross': return crossCells(action.i).filter(c => canShoot(attackerView, c));
     case 'salvo': return salvoCells(attackerView, action.k);
     default: return [];
   }
 }
-const NEEDS_RESOLVE = ['fire', 'barrage', 'cross', 'sonar', 'recon', 'rapid', 'salvo', 'jam'];
+const NEEDS_RESOLVE = ['fire', 'barrage', 'cross', 'sonar', 'recon', 'rapid', 'salvo', 'jam', 'smoke'];
 function resolveAction(D, action, attackerView) {
   const pk = { shots: targetCells(action, attackerView).map(c => resolveShot(D, c)) };
   if (action.type === 'sonar') pk.count = remainingIn(D, sonarCells(action.i));
@@ -576,8 +603,8 @@ function cardHTML(key, opt = {}) {
   let cdLine = '';
   if (opt.cd !== undefined) cdLine = opt.sunk ? '' : (opt.cd === 0
       ? `<div class="cd ready">スキル使用可能</div>` : `<div class="cd">再使用まで あと${opt.cd}ターン</div>`);
-  return `<div class="card ${opt.sel ? 'sel' : ''} ${opt.sunk ? 'sunk' : ''}" ${opt.onclick ? `onclick="${opt.onclick}"` : ''}>
-    <div class="name">${d.name}　<span class="muted">${d.shape.length}マス</span>${opt.extra || ''}</div>
+  return `<div class="card cat-${CAT_OF[key]} ${opt.sel ? 'sel' : ''} ${opt.sunk ? 'sunk' : ''}" ${opt.onclick ? `onclick="${opt.onclick}"` : ''}>
+    <div class="name">${d.name}　<span class="muted">${d.shape.length}マス</span><span class="cat-tag cat-${CAT_OF[key]}">${catName(key)}</span>${opt.extra || ''}</div>
     ${miniShape(normalize(d.shape))}
     <div class="skill"><b>${d.skill.name}</b>（間隔${d.skill.cd}）：${d.skill.desc}</div>${cdLine}</div>`;
 }
@@ -592,7 +619,7 @@ function goFleet() {
 }
 function used(pick) { return pick.reduce((a, k) => a + shapeSize(k), 0); }
 function renderFleet() {
-  $('fleet-cards').innerHTML = SHIPS.map(s => cardHTML(s.key, { sel: myPick.includes(s.key), onclick: `togglePick('${s.key}')` })).join('');
+  $('fleet-cards').innerHTML = groupedCards(k => cardHTML(k, { sel: myPick.includes(k), onclick: `togglePick('${k}')` }));
   $('budget-now').textContent = used(myPick);
   $('btn-fleet-ok').disabled = !(myPick.length >= MIN_SHIPS && used(myPick) <= BUDGET);
 }
@@ -789,7 +816,8 @@ function beginTurn() {
   if (!P.smokeLeft) P.smoke = [];
   P.jamNow = P.jam; P.jam = false;  // ジャミングはこのターンだけ有効
   P.fleet.forEach(s => { if (s.cd > 0) s.cd--; });
-  ui.mode = 'fire'; ui.ship = null; ui.rapidLeft = 0; ui.evShip = null; ui.forced = false; ui.minePend = null;
+  G.ts = (G.ts || 0) + 1;   // ターン通し番号（答え合わせで煙幕の有効期間を判定）
+  ui.mode = 'fire'; ui.ship = null; ui.rapidLeft = 0; ui.evShip = null; ui.forced = false; ui.minePend = null; ui.smokeAt = null;
   G.opForced = null;
   renderBattle();
   const wait = (ui.fxDelay || 0);
@@ -847,7 +875,7 @@ function applyAction(a, action, pk, sec) {
   const no = G.actNo++;
   ui.last = [];
   if (!ui.fxDelay || ui.fxDelay < 0) ui.fxDelay = 0;
-  if (['fire', 'barrage', 'cross', 'sonar', 'rapid', 'jam'].includes(action.type)) { sfx('fire'); ui.fxDelay = Math.max(ui.fxDelay, 350); }
+  if (['fire', 'barrage', 'cross', 'sonar', 'rapid', 'jam', 'smoke'].includes(action.type)) { sfx('fire'); ui.fxDelay = Math.max(ui.fxDelay, 350); }
   if (action.type === 'salvo') { sfx('rocket'); ui.fxDelay = Math.max(ui.fxDelay, 700); log(`${who}：<b>ロケット斉射</b>（ランダム${SALVO_N}発）`, a); }
   const ship = action.ship !== undefined ? A.fleet[action.ship] : null;
   if (ship) ship.cd = SHIP[ship.key].skill.cd; // 自分のターン開始ごとに1減る
@@ -886,9 +914,9 @@ function applyAction(a, action, pk, sec) {
       A.diving = true; sfx('dive'); ui.fxDelay = Math.max(ui.fxDelay, 700);
       log(`${who}：<b>潜水艦が潜航</b>（次の相手ターン、潜水艦への命中は外れになる）`, a); break;
     case 'smoke':
-      A.smoke = smokeCells(action.i); A.smokeLeft = 2; sfx('smoke'); ui.fxDelay = Math.max(ui.fxDelay, 700);
-      fx(() => popup(ownBoard, action.i, '煙幕', 'info'));
-      log(`${who}：<b>煙幕</b>（${posName(action.i)} の周り3×3。相手の2ターンの間、結果が不明になる）`, a); break;
+      A.smokeLeft = 2; ui.last = [action.i]; fx(() => sfx('smoke'));
+      if (sec) { A.smoke = smokeCells(sec.center); fx(() => popup(ownBoard, sec.center, '煙幕', 'info')); }
+      log(`${who}：<b>煙幕</b>（場所は秘密。${a === 0 ? '相手' : 'あなた'}の2ターンの間、煙の中への攻撃は結果が不明になる）`, a); break;
     case 'jam':
       D.jam = true; ui.last = [action.i]; fx(() => sfx('jam'));
       log(`${who}：<b>ジャミング</b>（${a === 0 ? '相手' : 'あなた'}は次のターン、スキルを使えない）`, a); break;
@@ -934,18 +962,19 @@ function act(a, action) {
 async function playerAct(action) {
   if (!NET.on) return act(0, action);
   ui.busy = true; renderBattle();
-  let pk = null;
-  if (NEEDS_RESOLVE.includes(action.type)) {
-    const expect = targetCells(action, G.p[0].view);
-    pk = await NET.request(action);
-    G.audit.push({ no: G.actNo, action, pk, expect, defDiving: G.p[1].diving, defSmoke: G.p[1].smoke.slice() });
-  } else if (SECRET_TYPES.includes(action.type)) {
+  let pk = null, out = action;
+  if (SECRET_TYPES.includes(action.type)) {
     // 中身（場所など）はハッシュだけ送り、決着後に公開して答え合わせ
     const s = salt(), { sec, ...pub } = action;
     const h = await sha(JSON.stringify({ type: action.type, sec, s, no: G.actNo }));
     NET.secrets.push({ no: G.actNo, type: action.type, sec, s });
-    NET.send('act', { action: { ...pub, h } });
-  } else NET.send('act', { action });
+    out = { ...pub, h };
+  }
+  if (NEEDS_RESOLVE.includes(action.type)) {
+    const expect = targetCells(action, G.p[0].view);
+    pk = await NET.request(out);
+    G.audit.push({ no: G.actNo, action: out, pk, expect, defDiving: G.p[1].diving, ts: G.ts });
+  } else NET.send('act', { action: out });
   const ends = applyAction(0, action, pk, action.sec);
   ui.busy = false;
   return ends;
@@ -978,12 +1007,12 @@ async function useSkill(si) {
   }
   ui.mode = t; ui.ship = si; sfx('click'); renderBattle();
 }
-function cancelSkill() { if (ui.rapidLeft || ui.forced) return; ui.minePend = null; ui.mode = 'fire'; ui.ship = null; ui.evShip = null; renderBattle(); }
+function cancelSkill() { if (ui.rapidLeft || ui.forced) return; ui.minePend = null; ui.smokeAt = null; ui.mode = 'fire'; ui.ship = null; ui.evShip = null; renderBattle(); }
 // 自分の海域をクリック（煙幕・修理・機雷・緊急回避）
 async function myBoardClick(i) {
   if (!myTurn()) return;
   const me = G.p[0], opV = G.p[1].view, m = ui.mode;
-  if (m === 'smoke') { await playerAct({ type: 'smoke', ship: ui.ship, i }); return endTurn(); }
+  if (m === 'smoke') { ui.smokeAt = i; sfx('click'); return renderBattle(); }   // 煙の場所 → 次に相手の海域で攻撃
   if (m === 'repair') {
     if (!canRepair(me, i)) return sfx('invalid');
     await playerAct({ type: 'repair', ship: ui.ship, sec: { cell: i } }); return endTurn();
@@ -1025,6 +1054,11 @@ async function enemyClick(i) {
   if (!myTurn()) return;
   const V = G.p[0].view;
   const m = ui.mode;
+  if (m === 'smoke') {
+    if (ui.smokeAt === null || ui.smokeAt === undefined || !canShoot(V, i)) return sfx('invalid');
+    const center = ui.smokeAt; ui.smokeAt = null;
+    await playerAct({ type: 'smoke', ship: ui.ship, i, sec: { center } }); return endTurn();
+  }
   if (m === 'fire' || m === 'sonar' || m === 'jam') {
     if (!canShoot(V, i)) return sfx('invalid');
     await playerAct({ type: m, i, ship: m === 'fire' ? undefined : ui.ship });
@@ -1079,7 +1113,8 @@ function renderBattle(reveal) {
     salvo: 'ロケット斉射：ロケット艦のカードをもう一度クリックで発射（Escでキャンセル）',
     jam: 'ジャミング：通常攻撃するマスを選ぶ。同時に相手の次のターンのスキルを封印（Escでキャンセル）',
     supply: '補給：このターンに続けて使いたい艦のカードを選ぶ（Escでキャンセル）',
-    smoke: '煙幕：「自分の海域」で煙の中心にするマスを選ぶ（Escでキャンセル）',
+    smoke: (ui.smokeAt === null || ui.smokeAt === undefined) ? '煙幕：「自分の海域」で煙の中心にするマスを選ぶ（Escでキャンセル）'
+                                                           : '煙幕：次に「相手の海域」で通常攻撃するマスを選ぶ（自分の海域をクリックで煙の場所を変更）',
     repair: '応急修理：「自分の海域」で直したい被弾マスを選ぶ（Escでキャンセル）',
     mine: (ui.minePend !== null && ui.minePend !== undefined) ? '機雷：2個目を置くマスを選ぶ（Escでキャンセル）' : '機雷：「自分の海域」で1個目を置く空きマスを選ぶ（Escでキャンセル）',
     evade: ui.evShip === null ? '緊急回避：「自分の海域」で動かす艦を選ぶ（被弾していない艦だけ／Escでキャンセル）'
@@ -1104,7 +1139,6 @@ function renderBattle(reveal) {
     if (!v && me.intel[i]) el.classList.add(me.intel[i]);
     if (v === 'rhit') el.classList.add('hit');
     if (me.spots.has(i) && canShoot(me.view, i)) el.classList.add('spot');
-    if (op.smoke.includes(i)) el.classList.add('smoked');
     const os = (reveal || G.over) ? shipAt(op, i) : null;
     if (os && v !== 'hit' && v !== 'sunk') {
       el.classList.add('reveal'); el.dataset.n = SHIP[os.key].name[0];
@@ -1128,7 +1162,7 @@ function renderBattle(reveal) {
     else if (v && !s) el.classList.add('miss');
     if (me.mines.has(i) || ui.minePend === i) el.classList.add('mine');
     if (op.spots.has(i)) el.classList.add('spotted');
-    if (me.smoke.includes(i)) el.classList.add('smoked');
+    if (me.smoke.includes(i) || (ui.mode === 'smoke' && ui.smokeAt !== null && ui.smokeAt !== undefined && smokeCells(ui.smokeAt).includes(i))) el.classList.add('smoked');
     if (hovMy.has(i)) el.classList.add('prev');
     if (ui.evShip !== null && me.fleet[ui.evShip].cells.includes(i)) el.classList.add('evsel');
     if (G.turn === 0 && last.has(i)) el.classList.add('last');
@@ -1137,7 +1171,8 @@ function renderBattle(reveal) {
 
   // 艦隊パネル
   const opNote = (op.jam ? '<div class="note">⚡ 次のターン、ジャミングでスキル封印</div>' : '') +
-                 (op.jamNow ? '<div class="note">⚡ ジャミング中</div>' : '');
+                 (op.jamNow ? '<div class="note">⚡ ジャミング中</div>' : '') +
+                 (op.smokeLeft > 0 ? `<div class="note">☁ 相手は煙幕を展開中（場所は不明・あと${op.smokeLeft}ターン）</div>` : '');
   $('op-fleet').innerHTML = opNote + op.fleet.map(s => cardHTML(s.key, { cd: s.cd, sunk: s.sunk,
     extra: (s.key === 'submarine' && op.diving && !s.sunk) ? ' <span style="color:#b39ddb">潜航中</span>' : '' })).join('');
   $('my-fleet').innerHTML = (me.jamNow ? '<div class="note">⚡ ジャミング中：このターンはスキルを使えない</div>' : '') +
@@ -1282,7 +1317,7 @@ function boardProgress() {
 function onOpponentAct({ seq, action }) {
   if (!G || G.over || G.turn !== 1) return;
   if (action.type === 'salvo') action.k = salvoKey(1);   // 乱数は自分でも計算して使う
-  if (SECRET_TYPES.includes(action.type)) G.commits[G.actNo] = { type: action.type, h: action.h };
+  if (SECRET_TYPES.includes(action.type)) G.commits[G.actNo] = { type: action.type, h: action.h, ts: G.ts };
   if (action.ship !== undefined && G.p[1].jamNow) G.violations.push('ジャミング中にスキルを使った');
   if (G.opForced !== null && G.opForced !== undefined) {   // 補給の直後は、補給した艦のスキルしか使えない
     const want = SHIP[G.p[1].fleet[G.opForced].key].skill.type;
@@ -1341,6 +1376,7 @@ async function verifyReveal(rv) {
     if (ev.k === 'sec') {
       const { type, sec } = ev.r;
       if (type === 'repair') { if (!canRepair(sim, sec.cell)) return { ok: false, msg: '修理できないマスを修理していた' }; shipAt(sim, sec.cell).hit.delete(sec.cell); }
+      if (type === 'smoke') { if (!Number.isInteger(sec.center) || sec.center < 0 || sec.center >= N * N) return { ok: false, msg: '煙幕の場所がおかしい' }; }
       if (type === 'mine') {
         const cs = Array.isArray(sec.cells) ? sec.cells : [];
         if (!cs.length || cs.length > 2 || new Set(cs).size !== cs.length) return { ok: false, msg: '機雷の数がおかしい' };
@@ -1358,7 +1394,10 @@ async function verifyReveal(rv) {
       continue;
     }
     const rec = ev.r;
-    sim.diving = rec.defDiving; sim.smoke = rec.defSmoke || [];
+    sim.diving = rec.defDiving;
+    // 相手の煙幕：張ったターンの後、相手の2ターン（自分の手番2回）だけ有効
+    const sm = secrets.filter(x => x.type === 'smoke' && G.commits[x.no] && rec.ts > G.commits[x.no].ts && rec.ts <= G.commits[x.no].ts + 3).pop();
+    sim.smoke = sm ? smokeCells(sm.sec.center) : [];
     if (JSON.stringify(rec.pk.shots.map(s => s.i)) !== JSON.stringify(rec.expect)) return { ok: false, msg: '攻撃したマスの結果が抜けている' };
     for (const sh of rec.pk.shots) {
       const e = resolveShot(sim, sh.i);
@@ -1423,7 +1462,10 @@ function cpuTurn() {
     const s = rnd(damaged); act(1, { type: 'repair', ship: rp, sec: { cell: rnd([...s.hit]) } }); return endTurn();
   }
   const sm = ready('smoke');
-  if (sm >= 0 && damaged.length && Math.random() < 0.5) { act(1, { type: 'smoke', ship: sm, i: rnd([...rnd(damaged).hit]) }); return endTurn(); }
+  if (sm >= 0 && (damaged.length || Math.random() < 0.3)) {
+    const center = damaged.length ? rnd([...rnd(damaged).hit]) : rnd(rnd(A.fleet.filter(s => !s.sunk)).cells);
+    act(1, { type: 'smoke', ship: sm, i: argmax(score, shootable), sec: { center } }); return endTurn();
+  }
   const jm = ready('jam');
   const playerArmed = G.p[0].fleet.some(s => !s.sunk && s.cd === 0 && ['cross', 'barrage', 'salvo', 'rapid'].includes(SHIP[s.key].skill.type));
   if (jm >= 0 && playerArmed && Math.random() < 0.6) { act(1, { type: 'jam', ship: jm, i: argmax(score, shootable) }); return endTurn(); }
@@ -1519,7 +1561,7 @@ function overlay(title, body, btn, cb, btn2, cb2) {
 function renderTitle() {
   $('size-sel').querySelectorAll('option').forEach(o => o.textContent = `${o.value}×${o.value}（予算${SIZE_BUDGET[o.value]}マス）`);
   $('title-rule').textContent = `予算内で${MIN_SHIPS}〜${MAX_SHIPS}隻を選ぶ。スキルは通常攻撃の代わりに使い、使うと「間隔」のターン数だけ再使用まで待つ。`;
-  $('title-ships').innerHTML = SHIPS.map(s => cardHTML(s.key)).join('');
+  $('title-ships').innerHTML = groupedCards(k => cardHTML(k));
 }
 renderTitle();
 function toTitle() {
