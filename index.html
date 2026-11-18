@@ -105,9 +105,24 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 @keyframes pulse{0%{transform:scale(1.25);filter:brightness(1.8)}100%{transform:scale(1)}}
 
 .turnbar{font-size:1.2em;font-weight:bold;padding:8px 16px;border-radius:10px;text-align:center;margin-bottom:10px}
-.turnbar.me{background:#1e6fa8}
+.turnbar.me{background:#1e6fa8;animation:myturn 1.6s ease-in-out infinite}
+@keyframes myturn{0%,100%{box-shadow:0 0 0 0 #4fc3f700}50%{box-shadow:0 0 18px 4px #4fc3f7aa}}
+.board.myturn{border-radius:8px;box-shadow:0 0 0 3px #4fc3f7,0 0 22px #4fc3f788;animation:boardglow 1.6s ease-in-out infinite}
+@keyframes boardglow{0%,100%{box-shadow:0 0 0 3px #4fc3f7,0 0 10px #4fc3f744}50%{box-shadow:0 0 0 3px #4fc3f7,0 0 28px #4fc3f7aa}}
+#turn-banner{position:fixed;left:0;right:0;top:38%;z-index:25;pointer-events:none;text-align:center;display:none}
+#turn-banner div{display:inline-block;font-size:42px;font-weight:bold;padding:14px 48px;border-radius:14px;
+  background:linear-gradient(90deg,#0d47a1ee,#1e88e5ee,#0d47a1ee);box-shadow:0 0 40px #4fc3f7aa;letter-spacing:4px}
+#turn-banner.show{display:block;animation:banner 1.4s ease-out forwards}
+@keyframes banner{0%{opacity:0;transform:scale(1.6)}15%{opacity:1;transform:scale(1)}75%{opacity:1}100%{opacity:0;transform:translateY(-20px)}}
 .turnbar.op{background:#5a2a2a}
 .modebar{min-height:28px;text-align:center;color:var(--accent);margin:6px 0}
+#opsum{max-width:760px;margin:0 auto 8px}
+.opsum{background:#3a2420;border:1px solid #ff8a65;border-radius:10px;padding:8px 14px;font-size:.92em}
+.opsum .ttl{color:#ffab91;font-weight:bold;margin-right:6px}
+.opsum .act{margin:3px 0}
+.opsum .hitn{color:#ff6b6b;font-weight:bold}.opsum .fogn{color:#cfd8dc}.opsum .sunkn{color:#ffd54f;font-weight:bold}
+.cell.oplast{box-shadow:inset 0 0 0 3px #ff8a65}
+.card.opused{box-shadow:0 0 0 2px #ff8a65,0 0 14px #ff8a6588}
 .log{max-height:160px;overflow-y:auto;font-size:.85em;line-height:1.6}
 .log .op{color:#ff9e9e}
 .log .me{color:#9ed8ff}
@@ -192,6 +207,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 <section id="s-battle" class="screen">
   <div class="turnbar" id="turnbar"></div>
   <div class="modebar" id="modebar"></div>
+  <div id="opsum"></div>
   <div class="row">
     <div class="panel side">
       <h3>相手の艦隊</h3>
@@ -223,6 +239,7 @@ button.primary{background:#1e6fa8;border-color:#4fc3f7}
 </section>
 
 <button id="mute" onclick="toggleMute()" title="効果音のオン/オフ">🔊</button>
+<div id="turn-banner"><div>あなたのターン</div></div>
 <div class="overlay" id="ov">
   <div class="panel">
     <h2 id="ov-title"></h2>
@@ -603,7 +620,7 @@ function cardHTML(key, opt = {}) {
   let cdLine = '';
   if (opt.cd !== undefined) cdLine = opt.sunk ? '' : (opt.cd === 0
       ? `<div class="cd ready">スキル使用可能</div>` : `<div class="cd">再使用まで あと${opt.cd}ターン</div>`);
-  return `<div class="card cat-${CAT_OF[key]} ${opt.sel ? 'sel' : ''} ${opt.sunk ? 'sunk' : ''}" ${opt.onclick ? `onclick="${opt.onclick}"` : ''}>
+  return `<div class="card cat-${CAT_OF[key]} ${opt.sel ? 'sel' : ''} ${opt.sunk ? 'sunk' : ''} ${opt.used ? 'opused' : ''}" ${opt.onclick ? `onclick="${opt.onclick}"` : ''}>
     <div class="name">${d.name}　<span class="muted">${d.shape.length}マス</span><span class="cat-tag cat-${CAT_OF[key]}">${catName(key)}</span>${opt.extra || ''}</div>
     ${miniShape(normalize(d.shape))}
     <div class="skill"><b>${d.skill.name}</b>（間隔${d.skill.cd}）：${d.skill.desc}</div>${cdLine}</div>`;
@@ -791,7 +808,7 @@ function startBattle() {
                     : randomFleetPlacement(cpuPick);
   G = { p: [makePlayer(mine), makePlayer(op)], turn: 0, log: [], over: false, turnNo: 1, audit: [],
         seed: NET.on ? [NET.f.mine.salt, NET.f.op.salt].sort().join('|') : salt(),
-        actNo: 0, commits: {}, spotClaims: [], violations: [] };
+        actNo: 0, commits: {}, spotClaims: [], violations: [], lastOp: [] };
   G.cpu = makeCpuBrain();
   ui = { mode: 'fire', ship: null, axis: 'row', rapidLeft: 0, hover: null, hoverMy: null, evShip: null, last: [], busy: false };
   buildBoard('enemy-board', i => enemyClick(i), i => { ui.hover = i; renderBattle(); }, () => { ui.hover = null; renderBattle(); });
@@ -804,6 +821,59 @@ function startBattle() {
   beginTurn();
 }
 
+// 自分のターンの通知：大きなバナー＋（別タブを見ているときは）タブ名を変える＋スマホは振動
+const BASE_TITLE = document.title;
+function announceMyTurn() {
+  const b = $('turn-banner');
+  b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+  setTimeout(() => b.classList.remove('show'), 1500);
+  if (document.hidden) document.title = '▶ あなたのターン！ - ' + BASE_TITLE;
+  try { if (navigator.vibrate) navigator.vibrate(120); } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = BASE_TITLE; });
+// ---------- 相手がこのターンにしたことのまとめ ----------
+const SKILL_OF = Object.fromEntries(SHIPS.map(s => [s.skill.type, s]));
+function recordOp(action, pk) {
+  const L = G.lastOp, t = action.type;
+  let e = L[L.length - 1];
+  if (!(e && t === 'rapid' && e.type === 'rapid')) { e = { type: t, cells: [], line: [], hit: 0, miss: 0, fog: 0, sunk: [], extra: [] }; L.push(e); }
+  for (const r of (pk ? pk.shots : [])) {
+    e.cells.push(r.i);
+    if (r.result === 'hit') e.hit++; else if (r.result === 'fog') e.fog++; else e.miss++;
+    if (r.sunkKey) e.sunk.push(shipName(r.sunkKey));
+    if (r.mine) e.extra.push('💥 あなたの機雷に触れた');
+  }
+  if (t === 'sonar') e.extra.push(`周囲8マスの反応${pk.count > 0 ? 'あり' : 'なし'}`);
+  if (t === 'recon') {
+    const [x, y] = xy(action.i); e.line = lineCells(action.i, action.axis);
+    e.extra.push(`${action.axis === 'row' ? (y + 1) + '行目' : 'ABCDEFGHIJ'[x] + '列'}を偵察 → 残り${pk.count}マスと知られた`);
+  }
+  if (t === 'supply') e.extra.push(`→ ${shipName(G.p[1].fleet[action.target].key)}のスキルを続けて使う`);
+  if (t === 'jam') e.extra.push('このターン、あなたはスキルを使えない');
+  if (t === 'dive') e.extra.push('このターン、潜水艦への命中は外れになる');
+  if (t === 'smoke') e.extra.push('どこかに煙幕（場所は不明）');
+  if (t === 'repair') e.extra.push('どこかの被弾が1マス直った');
+  if (t === 'mine') e.extra.push('どこかに機雷を置いた');
+  if (t === 'evade') e.extra.push('どれかの艦が1マス動いた');
+}
+function opSummaryHTML() {
+  if (!G || !G.lastOp.length) return '';
+  const rows = G.lastOp.map(e => {
+    const sk = SKILL_OF[e.type];
+    const name = e.type === 'fire' ? '通常攻撃' : `<b>${sk.skill.name}</b>（${sk.name}）`;
+    const cells = e.cells.length ? ' ' + e.cells.map(posName).join('・') : '';
+    const res = [];
+    if (e.cells.length) {
+      const n = c => e.cells.length > 1 ? c : '';
+      if (e.hit) res.push(`<span class="hitn">命中${n(e.hit)}</span>`);
+      if (e.miss) res.push(`外れ${n(e.miss)}`);
+      if (e.fog) res.push(`<span class="fogn">不明${n(e.fog)}</span>`);
+    }
+    e.sunk.forEach(n => res.push(`<span class="sunkn">${n}撃沈！</span>`));
+    return `<div class="act">▶ ${name}${cells}${res.length ? ' → ' + res.join('・') : ''}${e.extra.length ? '　<span class="muted">' + e.extra.join('／') + '</span>' : ''}</div>`;
+  }).join('');
+  return `<div class="opsum"><span class="ttl">${G.turn === 1 ? '相手の行動中' : '相手が前のターンにしたこと'}</span>${rows}</div>`;
+}
 function log(msg, who) {
   G.log.unshift(`<div class="${who === 0 ? 'me' : who === 1 ? 'op' : ''}">${msg}</div>`);
   $('log').innerHTML = G.log.slice(0, 80).join('');
@@ -811,6 +881,7 @@ function log(msg, who) {
 
 function beginTurn() {
   const P = G.p[G.turn];
+  if (G.turn === 1) G.lastOp = [];   // 相手のターンの行動を記録し直す
   P.diving = false;                 // 潜航は自分の次のターン開始で解除
   if (P.smokeLeft > 0) P.smokeLeft--; // 煙幕は相手の2ターン分残る
   if (!P.smokeLeft) P.smoke = [];
@@ -823,7 +894,7 @@ function beginTurn() {
   const wait = (ui.fxDelay || 0);
   ui.fxDelay = 0;
   if (G.turn === 1) { ui.busy = true; if (!NET.on) setTimeout(cpuTurn, 700 + wait); }
-  else { ui.busy = true; setTimeout(() => { ui.busy = false; sfx('myTurn'); renderBattle(); }, wait); }
+  else { ui.busy = true; setTimeout(() => { ui.busy = false; sfx('myTurn'); announceMyTurn(); renderBattle(); }, wait); }
 }
 function endTurn() {
   if (!alive(G.p[1 - G.turn])) return finish(G.turn);
@@ -939,6 +1010,7 @@ function applyAction(a, action, pk, sec) {
       }
       sfx('evade'); log(`${who}：<b>緊急回避</b>（どれかの艦が1マス動いた）`, a); break;
   }
+  if (a === 1) recordOp(action, pk);
   if (action.type === 'supply') return false;   // 補給のあと、同じターンに補給した艦のスキルを使う
   return action.type === 'rapid' ? !!action.lastShot : true;
 }
@@ -1133,6 +1205,7 @@ function renderBattle(reveal) {
   const hov = new Set(hoverCells()), last = new Set(ui.last);
   const eb = $('enemy-board');
   eb.classList.toggle('clickable', myTurn());
+  eb.classList.toggle('myturn', myTurn());
   eb.querySelectorAll('.cell').forEach((el, i) => {
     el.className = 'cell';
     const v = me.view[i]; if (v) el.classList.add(v);
@@ -1151,6 +1224,7 @@ function renderBattle(reveal) {
 
   // 自分盤面
   const mb = $('my-board'), hovMy = new Set(myHoverCells());
+  const opCells = new Set(G.over ? [] : G.lastOp.flatMap(e => [...e.cells, ...e.line]));
   mb.classList.toggle('clickable', myTurn() && ['smoke', 'repair', 'mine', 'evade'].includes(ui.mode));
   mb.querySelectorAll('.cell').forEach((el, i) => {
     el.className = 'cell';
@@ -1166,6 +1240,7 @@ function renderBattle(reveal) {
     if (hovMy.has(i)) el.classList.add('prev');
     if (ui.evShip !== null && me.fleet[ui.evShip].cells.includes(i)) el.classList.add('evsel');
     if (G.turn === 0 && last.has(i)) el.classList.add('last');
+    if (opCells.has(i)) el.classList.add('oplast');
   });
   showRecon(mb, op.recon);   // 相手に偵察された列も自分の盤面に出す
 
@@ -1173,7 +1248,9 @@ function renderBattle(reveal) {
   const opNote = (op.jam ? '<div class="note">⚡ 次のターン、ジャミングでスキル封印</div>' : '') +
                  (op.jamNow ? '<div class="note">⚡ ジャミング中</div>' : '') +
                  (op.smokeLeft > 0 ? `<div class="note">☁ 相手は煙幕を展開中（場所は不明・あと${op.smokeLeft}ターン）</div>` : '');
-  $('op-fleet').innerHTML = opNote + op.fleet.map(s => cardHTML(s.key, { cd: s.cd, sunk: s.sunk,
+  const usedTypes = new Set(G.lastOp.map(e => e.type));
+  $('opsum').innerHTML = G.over ? '' : opSummaryHTML();
+  $('op-fleet').innerHTML = opNote + op.fleet.map(s => cardHTML(s.key, { cd: s.cd, sunk: s.sunk, used: usedTypes.has(SHIP[s.key].skill.type),
     extra: (s.key === 'submarine' && op.diving && !s.sunk) ? ' <span style="color:#b39ddb">潜航中</span>' : '' })).join('');
   $('my-fleet').innerHTML = (me.jamNow ? '<div class="note">⚡ ジャミング中：このターンはスキルを使えない</div>' : '') +
     (me.jam ? '<div class="note">⚡ 次のターン、ジャミングでスキル封印</div>' : '') + me.fleet.map((s, si) => cardHTML(s.key, { cd: s.cd, sunk: s.sunk, sel: ui.ship === si,
