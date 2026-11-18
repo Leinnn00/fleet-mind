@@ -255,7 +255,7 @@ const SHIPS = [
   { key:'jammer', name:'電子戦艦', shape:[[0,0],[1,1],[2,2]],
     skill:{ type:'jam', name:'ジャミング', cd:4, desc:'相手の次のターン、相手はスキルを使えない' } },
   { key:'supply', name:'補給艦', shape:[[0,0],[1,0],[0,1],[1,1],[0,2],[1,2]],
-    skill:{ type:'supply', name:'補給', cd:5, desc:'自分の艦1隻のスキルを、すぐ使える状態にする' } },
+    skill:{ type:'supply', name:'補給', cd:5, desc:'自分の艦1隻のスキルをすぐ使える状態にして、このターンにそのまま使う（攻撃の代わりに2つのスキルを使える）' } },
   { key:'minelayer', name:'機雷敷設艦', shape:[[0,0],[0,1],[0,2],[1,2],[2,2]],
     skill:{ type:'mine', name:'機雷', cd:3, desc:'自分の海域の空きマスに見えない機雷を置く。相手が撃つと、相手の艦のマスが1つ判明する' } },
 ];
@@ -354,6 +354,13 @@ function rocksOk() {
   for (let t = 0; t < 25 && big.length; t++) {
     try { randomFleetPlacement(big[Math.floor(Math.random() * big.length)]); } catch (e) { return false; }
   }
+  return true;
+}
+// 補給できる艦：沈んでいない・スキル待ち中・補給艦以外（修理は被弾があるときだけ）
+function canSupply(P, k) {
+  const s = P.fleet[k], t = SHIP[s.key].skill.type;
+  if (s.sunk || s.cd === 0 || t === 'supply') return false;
+  if (t === 'repair') return P.fleet.some(x => !x.sunk && x.hit.size > 0);
   return true;
 }
 function canShoot(view, i) { return view[i] === null || view[i] === 'dmiss' || view[i] === 'fog' || view[i] === 'rhit'; }
@@ -777,7 +784,8 @@ function beginTurn() {
   if (!P.smokeLeft) P.smoke = [];
   P.jamNow = P.jam; P.jam = false;  // ジャミングはこのターンだけ有効
   P.fleet.forEach(s => { if (s.cd > 0) s.cd--; });
-  ui.mode = 'fire'; ui.ship = null; ui.rapidLeft = 0; ui.evShip = null;
+  ui.mode = 'fire'; ui.ship = null; ui.rapidLeft = 0; ui.evShip = null; ui.forced = false;
+  G.opForced = null;
   renderBattle();
   const wait = (ui.fxDelay || 0);
   ui.fxDelay = 0;
@@ -880,7 +888,7 @@ function applyAction(a, action, pk, sec) {
       log(`${who}：<b>ジャミング</b>（${a === 0 ? '相手' : 'あなた'}は次のターン、スキルを使えない）`, a); break;
     case 'supply': {
       const t = A.fleet[action.target]; t.cd = 0; sfx('supply');
-      log(`${who}：<b>補給</b> → ${shipName(t.key)}のスキルが使用可能に`, a); break;
+      log(`${who}：<b>補給</b> → このターン、続けて${shipName(t.key)}のスキルを使う`, a); break;
     }
     case 'repair':
       if (sec) { const s = shipAt(A, sec.cell); if (s) s.hit.delete(sec.cell); fx(() => popup(ownBoard, sec.cell, '修理', 'info')); }
@@ -897,6 +905,7 @@ function applyAction(a, action, pk, sec) {
       }
       sfx('evade'); log(`${who}：<b>緊急回避</b>（どれかの艦が1マス動いた）`, a); break;
   }
+  if (action.type === 'supply') return false;   // 補給のあと、同じターンに補給した艦のスキルを使う
   return action.type === 'rapid' ? !!action.lastShot : true;
 }
 // 機雷が発動：撃った側(a)の艦のマスが1つ、機雷の持ち主にバレる
@@ -943,9 +952,12 @@ async function useSkill(si) {
   const me = G.p[0], s = me.fleet[si];
   // 補給の対象選び
   if (ui.mode === 'supply' && ui.ship !== si) {
-    if (s.sunk || s.cd === 0) return sfx('invalid');
-    await playerAct({ type: 'supply', ship: ui.ship, target: si }); return endTurn();
+    if (!canSupply(me, si)) return sfx('invalid');
+    await playerAct({ type: 'supply', ship: ui.ship, target: si });
+    // そのまま補給した艦のスキル発動モードへ（キャンセル不可）
+    ui.mode = SHIP[s.key].skill.type; ui.ship = si; ui.forced = true; renderBattle(); return;
   }
+  if (ui.forced && ui.ship !== si) return sfx('invalid');
   if (s.sunk || s.cd > 0) return;
   if (me.jamNow) { sfx('invalid'); return log('ジャミング中：このターンはスキルを使えない', 'sys'); }
   const t = SHIP[s.key].skill.type;
@@ -960,7 +972,7 @@ async function useSkill(si) {
   }
   ui.mode = t; ui.ship = si; sfx('click'); renderBattle();
 }
-function cancelSkill() { if (ui.rapidLeft) return; ui.mode = 'fire'; ui.ship = null; ui.evShip = null; renderBattle(); }
+function cancelSkill() { if (ui.rapidLeft || ui.forced) return; ui.mode = 'fire'; ui.ship = null; ui.evShip = null; renderBattle(); }
 // 自分の海域をクリック（煙幕・修理・機雷・緊急回避）
 async function myBoardClick(i) {
   if (!myTurn()) return;
@@ -1051,7 +1063,7 @@ function renderBattle(reveal) {
     dive: '潜航：潜水艦のカードをもう一度クリックで確定（Escでキャンセル）',
     salvo: 'ロケット斉射：ロケット艦のカードをもう一度クリックで発射（Escでキャンセル）',
     jam: 'ジャミング：電子戦艦のカードをもう一度クリックで確定（Escでキャンセル）',
-    supply: '補給：スキルを使えるようにしたい自分の艦のカードを選ぶ（Escでキャンセル）',
+    supply: '補給：このターンに続けて使いたい艦のカードを選ぶ（Escでキャンセル）',
     smoke: '煙幕：「自分の海域」で煙の中心にするマスを選ぶ（Escでキャンセル）',
     repair: '応急修理：「自分の海域」で直したい被弾マスを選ぶ（Escでキャンセル）',
     mine: '機雷：「自分の海域」の空いているマスを選ぶ（Escでキャンセル）',
@@ -1065,7 +1077,7 @@ function renderBattle(reveal) {
     const s = me.fleet[ui.evShip], lab = { '0,-1': '↑', '0,1': '↓', '-1,0': '←', '1,0': '→' };
     $('modebar').innerHTML = `<div class="endbar"><span>${modeText.evade}</span>` +
       DIRS.map(([dx, dy]) => `<button ${evadeTarget(me, op.view, s, dx, dy) ? '' : 'disabled'} onclick="evadeDir(${dx},${dy})">${lab[dx + ',' + dy]}</button>`).join('') + '</div>';
-  } else $('modebar').textContent = myTurn() ? (me.jamNow && ui.mode === 'fire' ? '⚡ ジャミング中：このターンはスキルを使えない。通常攻撃のみ' : modeText[ui.mode]) : '';
+  } else $('modebar').textContent = myTurn() ? (ui.forced ? '補給済み → ' + (modeText[ui.mode] || '').replace('（Escでキャンセル）', '').replace('（Escでキャンセル）', '') : me.jamNow && ui.mode === 'fire' ? '⚡ ジャミング中：このターンはスキルを使えない。通常攻撃のみ' : modeText[ui.mode]) : '';
 
   // 相手盤面
   const hov = new Set(hoverCells()), last = new Set(ui.last);
@@ -1257,6 +1269,12 @@ function onOpponentAct({ seq, action }) {
   if (action.type === 'salvo') action.k = salvoKey(1);   // 乱数は自分でも計算して使う
   if (SECRET_TYPES.includes(action.type)) G.commits[G.actNo] = { type: action.type, h: action.h };
   if (action.ship !== undefined && G.p[1].jamNow) G.violations.push('ジャミング中にスキルを使った');
+  if (G.opForced !== null && G.opForced !== undefined) {   // 補給の直後は、補給した艦のスキルしか使えない
+    const want = SHIP[G.p[1].fleet[G.opForced].key].skill.type;
+    if (action.type !== want || (action.ship !== undefined && action.ship !== G.opForced)) G.violations.push('補給した艦以外の行動をした');
+    if (action.ship !== undefined) G.opForced = null;
+  }
+  if (action.type === 'supply') G.opForced = action.target;
   let pk = null;
   if (NEEDS_RESOLVE.includes(action.type)) {
     pk = resolveAction(G.p[0], action, G.p[1].view);
@@ -1371,7 +1389,8 @@ function argmax(score, filter) {
 function cpuTurn() {
   if (G.over) return;
   const A = G.p[1], V = A.view;
-  const ready = t => A.fleet.findIndex(s => !s.sunk && s.cd === 0 && SHIP[s.key].skill.type === t);
+  let forced = -1;   // 補給した艦（このターンはその艦のスキルを使う）
+  const ready = t => A.fleet.findIndex((s, k) => !s.sunk && s.cd === 0 && SHIP[s.key].skill.type === t && (forced < 0 || k === forced));
   const { score, hits } = density(1);
   const shootable = i => canShoot(V, i) && V[i] !== 'rhit';
   const P = A, opV = G.p[0].view, rnd = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -1403,7 +1422,7 @@ function cpuTurn() {
   const sp = ready('supply');
   if (sp >= 0) {
     const t = A.fleet.findIndex((s, k) => k !== sp && !s.sunk && s.cd >= 2 && ['cross', 'barrage', 'salvo', 'rapid'].includes(SHIP[s.key].skill.type));
-    if (t >= 0) { act(1, { type: 'supply', ship: sp, target: t }); return endTurn(); }
+    if (t >= 0) { act(1, { type: 'supply', ship: sp, target: t }); forced = t; }   // ターンは続く
   }
 
   // 潜航：潜水艦が被弾中なら使う
@@ -1413,7 +1432,7 @@ function cpuTurn() {
 
   // ロケット斉射：まだ当たりがない探索中に使う
   const sv = ready('salvo');
-  if (sv >= 0 && hits.length === 0) { act(1, { type: 'salvo', ship: sv, k: salvoKey(1) }); return endTurn(); }
+  if (sv >= 0 && (hits.length === 0 || sv === forced)) { act(1, { type: 'salvo', ship: sv, k: salvoKey(1) }); return endTurn(); }
 
   // 連射
   const ri = ready('rapid');
